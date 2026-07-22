@@ -603,13 +603,24 @@
       f.stripTransforms.push(makeStripTransform(maxZ + 1));
     }
     if (f.stripTransforms.length > lineCount) f.stripTransforms.length = lineCount;
-    f.stripTransforms = f.stripTransforms.map((item, index) => ({
-      x: clamp(Number(item?.x) || 0, -12000, 12000),
-      y: clamp(Number(item?.y) || 0, -12000, 12000),
-      scale: clamp(Number(item?.scale) || 1, 0.1, 5),
-      rotation: clamp(Number(item?.rotation) || 0, -180, 180),
-      z: Number.isFinite(Number(item?.z)) ? Number(item.z) : index
-    }));
+
+    // Keep each transform object alive while the pointer is dragging it.
+    // Replacing the array items here used to leave dragState.transform pointing
+    // at a discarded object, so the cursor changed to grabbing but the strip
+    // never moved, scaled, or rotated on screen.
+    for (let index = 0; index < f.stripTransforms.length; index++) {
+      let item = f.stripTransforms[index];
+      if (!item || typeof item !== "object") {
+        item = makeStripTransform(index);
+        f.stripTransforms[index] = item;
+      }
+      item.x = clamp(Number(item.x) || 0, -12000, 12000);
+      item.y = clamp(Number(item.y) || 0, -12000, 12000);
+      item.scale = clamp(Number(item.scale) || 1, 0.1, 5);
+      item.rotation = clamp(Number(item.rotation) || 0, -180, 180);
+      item.z = Number.isFinite(Number(item.z)) ? Number(item.z) : index;
+    }
+
     const ordered = [...f.stripTransforms].sort((a, b) => a.z - b.z);
     ordered.forEach((item, index) => { item.z = index; });
     f.selectedStrip = clamp(Math.round(Number(f.selectedStrip) || 0), 0, Math.max(0, lineCount - 1));
