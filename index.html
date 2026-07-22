@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#111514">
   <title>필름 프레임 메이커</title>
-  <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./css/styles.css?v=3">
 </head>
 <body>
   <header class="app-header">
@@ -74,9 +74,9 @@
             <label class="field">
               <span>여백 결정 방식</span>
               <select id="movieBarsMode">
-                <option value="ratio">전체 이미지 비율 템플릿</option>
-                <option value="size">전체 대지 크기 직접 입력</option>
-                <option value="bar">여백 크기 직접 입력</option>
+                <option value="ratio">전체 비율로 자동 계산</option>
+                <option value="size">대지 크기로 자동 계산</option>
+                <option value="bar">여백 크기 직접 지정</option>
               </select>
             </label>
 
@@ -137,7 +137,14 @@
             <input class="visually-hidden" id="viewfinderImageInput" type="file" accept="image/png,image/jpeg,image/webp">
             <p class="field-help" id="viewfinderImageName">프레임 안쪽을 클릭해도 사진을 추가할 수 있습니다.</p>
           </div>
-          <div class="segmented" role="group" aria-label="방향">
+          <label class="field">
+            <span>뷰파인더 종류</span>
+            <select id="viewfinderStyle">
+              <option value="digital">디지털 카메라</option>
+              <option value="film">필름 카메라</option>
+            </select>
+          </label>
+          <div class="segmented" role="group" aria-label="뷰파인더 방향">
             <button class="segment is-active" data-orientation-target="viewfinder" data-value="landscape">가로</button>
             <button class="segment" data-orientation-target="viewfinder" data-value="portrait">세로</button>
           </div>
@@ -151,9 +158,16 @@
           <label class="toggle-row">
             <input id="viewfinderGrid" type="checkbox" checked>
             <span class="toggle-ui"></span>
-            <span>3분할 가이드 표시</span>
+            <span>삼분할 가이드 표시</span>
           </label>
-          <label class="toggle-row">
+          <label class="field">
+            <span>가이드 색상</span>
+            <select id="viewfinderGridColor">
+              <option value="white">흰색</option>
+              <option value="black">검정</option>
+            </select>
+          </label>
+          <label class="toggle-row" id="viewfinderRecRow">
             <input id="viewfinderRec" type="checkbox" checked>
             <span class="toggle-ui"></span>
             <span>REC / 배터리 표시</span>
@@ -162,8 +176,12 @@
 
         <div class="mode-panel" data-panel="film35" hidden>
           <div class="field-grid two-col">
-            <label class="field"><span>컷 수</span><input id="film35Count" type="number" min="1" max="36" step="1" value="6"></label>
-            <label class="field"><span>몇 컷마다 줄바꿈</span><input id="film35BreakEvery" type="number" min="1" max="36" step="1" value="6"></label>
+            <label class="field"><span>컷 수</span><input id="film35Count" type="number" min="1" max="36" step="1" value="1"></label>
+            <label class="field"><span>줄바꿈 기준 컷</span><input id="film35BreakEvery" type="number" min="1" max="36" step="1" value="6"></label>
+          </div>
+          <div class="segmented" role="group" aria-label="소형 필름 방향">
+            <button class="segment is-active" data-orientation-target="film35" data-value="landscape">가로</button>
+            <button class="segment" data-orientation-target="film35" data-value="portrait">세로</button>
           </div>
           <div class="callout">미리보기 속 프레임을 클릭하면 해당 컷에 사진을 추가하거나 선택할 수 있습니다.</div>
           <input class="visually-hidden" id="film35CutInput" type="file" accept="image/png,image/jpeg,image/webp">
@@ -179,6 +197,11 @@
             </select>
           </label>
           <button class="button button-full" id="film35ApplyEffectsAll">현재 효과를 모든 컷에 복사</button>
+          <label class="toggle-row">
+            <input id="film35PerCutLightLeak" type="checkbox">
+            <span class="toggle-ui"></span>
+            <span>랜덤 빛샘을 컷마다 다르게 생성</span>
+          </label>
 
           <details open>
             <summary>스트립 배열</summary>
@@ -187,7 +210,7 @@
               <label class="field range-field"><span>줄별 좌우 어긋남</span><div class="range-pair"><input id="film35RowOffset" type="range" min="-800" max="800" step="1" value="0"><input id="film35RowOffsetNumber" type="number" min="-800" max="800" step="1" value="0"></div></label>
               <label class="toggle-row"><input id="film35RandomOffset" type="checkbox"><span class="toggle-ui"></span><span>좌우 어긋남 랜덤</span></label>
               <label class="field range-field"><span>랜덤 어긋남 범위</span><div class="range-pair"><input id="film35OffsetJitter" type="range" min="0" max="800" step="1" value="160"><input id="film35OffsetJitterNumber" type="number" min="0" max="800" step="1" value="160"></div></label>
-              <button class="button button-ghost button-full" id="film35ShuffleOffset">어긋남 다시 섞기</button>
+              <button class="button button-ghost button-full" id="film35ShuffleOffset">다시 섞기</button>
             </div>
           </details>
 
@@ -217,8 +240,8 @@
               <label class="toggle-row"><input id="film35ShadowEnabled" type="checkbox" checked><span class="toggle-ui"></span><span>그림자 사용</span></label>
               <label class="field color-field"><span>그림자 색상</span><div class="color-control"><input id="film35ShadowColor" type="color" value="#000000"><input id="film35ShadowColorText" type="text" value="#000000"></div></label>
               <label class="field range-field"><span>불투명도</span><div class="range-pair"><input id="film35ShadowOpacity" type="range" min="0" max="100" value="45"><input id="film35ShadowOpacityNumber" type="number" min="0" max="100" value="45"></div></label>
-              <label class="field range-field"><span>블러</span><div class="range-pair"><input id="film35ShadowBlur" type="range" min="0" max="160" value="36"><input id="film35ShadowBlurNumber" type="number" min="0" max="160" value="36"></div></label>
-              <div class="field-grid two-col"><label class="field"><span>X 이동</span><input id="film35ShadowX" type="number" min="-500" max="500" value="0"></label><label class="field"><span>Y 이동</span><input id="film35ShadowY" type="number" min="-500" max="500" value="22"></label></div>
+              <label class="field range-field"><span>블러</span><div class="range-pair"><input id="film35ShadowBlur" type="range" min="0" max="160" value="17"><input id="film35ShadowBlurNumber" type="number" min="0" max="160" value="17"></div></label>
+              <div class="field-grid two-col"><label class="field"><span>X 이동</span><input id="film35ShadowX" type="number" min="-500" max="500" value="2"></label><label class="field"><span>Y 이동</span><input id="film35ShadowY" type="number" min="-500" max="500" value="5"></label></div>
             </div>
           </details>
 
@@ -245,17 +268,21 @@
             <input class="visually-hidden" id="film120ImageInput" type="file" accept="image/png,image/jpeg,image/webp">
             <p class="field-help" id="film120ImageName">프레임 안쪽을 클릭해도 사진을 추가할 수 있습니다.</p>
           </div>
-          <div class="segmented" role="group" aria-label="방향"><button class="segment is-active" data-orientation-target="film120" data-value="portrait">세로</button><button class="segment" data-orientation-target="film120" data-value="landscape">가로</button></div>
+          <div class="segmented" role="group" aria-label="중형 필름 방향"><button class="segment is-active" data-orientation-target="film120" data-value="landscape">가로</button><button class="segment" data-orientation-target="film120" data-value="portrait">세로</button></div>
           <label class="field range-field"><span>대지 가로 길이</span><div class="range-pair"><input id="film120Width" type="range" min="640" max="4096" step="1" value="1600"><input id="film120WidthNumber" type="number" min="640" max="4096" step="1" value="1600"></div></label>
           <label class="field color-field"><span>필름 프레임 색상</span><div class="color-control"><input id="film120FrameColor" type="color" value="#201416"><input id="film120FrameColorText" type="text" value="#201416"></div></label>
-          <label class="field"><span>필름 번호</span><input id="film120Number" type="text" value="120" maxlength="8"></label>
+          <div class="field-grid two-col">
+            <label class="field"><span>필름 번호</span><input id="film120Number" type="text" value="120" maxlength="8"></label>
+            <label class="field"><span>컷 번호</span><input id="film120CutNumber" type="text" value="01" maxlength="8"></label>
+          </div>
+          <label class="field"><span>우측 상단 표기</span><input id="film120EdgeText" type="text" value="400" maxlength="24"></label>
         </div>
       </section>
 
       <section class="panel">
         <div class="panel-heading compact-heading"><div><span class="panel-index">02</span><h2>사진 위치</h2></div></div>
         <div class="transform-grid">
-          <label class="field range-field span-2"><span>확대 / 축소</span><div class="range-pair"><input id="imageZoom" type="range" min="50" max="400" value="100"><input id="imageZoomNumber" type="number" min="50" max="400" value="100"></div></label>
+          <label class="field range-field span-2"><span>확대 / 축소</span><div class="range-pair"><input id="imageZoom" type="range" min="100" max="800" value="100"><input id="imageZoomNumber" type="number" min="100" max="800" value="100"></div></label>
           <label class="field range-field span-2"><span>좌우 이동</span><div class="range-pair"><input id="imageOffsetX" type="range" min="-100" max="100" value="0"><input id="imageOffsetXNumber" type="number" min="-100" max="100" value="0"></div></label>
           <label class="field range-field span-2"><span>상하 이동</span><div class="range-pair"><input id="imageOffsetY" type="range" min="-100" max="100" value="0"><input id="imageOffsetYNumber" type="number" min="-100" max="100" value="0"></div></label>
           <label class="field range-field span-2"><span>미세 회전</span><div class="range-pair"><input id="imageAngle" type="range" min="-45" max="45" step="0.1" value="0"><input id="imageAngleNumber" type="number" min="-45" max="45" step="0.1" value="0"></div></label>
@@ -269,8 +296,8 @@
       <section class="panel" data-subtitle-panel>
         <div class="panel-heading compact-heading"><div><span class="panel-index">03</span><h2>영화 자막</h2></div></div>
         <label class="toggle-row"><input id="subtitleEnabled" type="checkbox" checked><span class="toggle-ui"></span><span>자막 사용</span></label>
-        <label class="field"><span>자막 내용 · 줄바꿈은 //</span><textarea id="subtitleText" rows="4">이 장면을 오래 기억하고 싶어.//그때의 빛까지도.</textarea></label>
-        <div class="field-grid two-col"><label class="field"><span>스타일 템플릿</span><select id="subtitleTemplate"><option value="classic">클래식 흰 자막</option><option value="festival">영화제 산세리프</option><option value="noir">누아르 이탤릭</option><option value="archive">아카이브 명조</option><option value="soft">소프트 크림</option></select></label><label class="field"><span>폰트</span><select id="subtitleFont"><option value="Gulim">굴림체</option><option value="Dotum">돋움체</option><option value="Batang">명조체</option><option value="ChosunMyeongjo">조선일보명조체</option><option value="PretendardVariable">프리텐다드</option><option value="custom">사용자 폰트</option></select></label></div>
+        <label class="field"><span>자막 내용 · Enter 또는 // 로 줄바꿈</span><textarea id="subtitleText" rows="4">이 장면을 오래 기억하고 싶어.//그때의 빛까지도.</textarea></label>
+        <div class="field-grid two-col"><label class="field"><span>스타일 템플릿</span><select id="subtitleTemplate"><option value="classic">기본 흰색 영화 자막</option><option value="festival">왼쪽 하단 고딕 자막</option><option value="noir">중앙 명조 이탤릭 자막</option><option value="archive">좌상단 기록용 명조 자막</option><option value="soft">크림색 감성 자막</option></select></label><label class="field"><span>폰트</span><select id="subtitleFont"><option value="Gulim">굴림체</option><option value="Dotum">돋움체</option><option value="Batang">명조체</option><option value="ChosunMyeongjo">조선일보명조체</option><option value="PretendardVariable">프리텐다드</option><option value="custom">사용자 폰트</option></select></label></div>
         <div class="button-row"><button class="button button-ghost" id="customFontBtn">폰트 파일 불러오기</button><span id="customFontName" class="inline-status">미등록</span></div>
         <input class="visually-hidden" id="customFontInput" type="file" accept=".ttf,.otf,.woff,.woff2">
         <label class="toggle-row"><input id="subtitleAutoSize" type="checkbox" checked><span class="toggle-ui"></span><span>문장 길이에 맞춰 자동 크기</span></label>
@@ -288,19 +315,42 @@
 
     <section class="preview-column">
       <div class="preview-toolbar">
-        <div><span class="status-dot"></span><span id="previewStatus">실시간 미리보기</span></div>
-        <div class="preview-actions"><button class="icon-button" id="previewFitBtn" title="미리보기 맞춤">맞춤</button><span id="previewSizeLabel">1920 × 1080</span></div>
+        <div class="preview-status-group">
+          <span><span class="status-dot"></span><span id="previewStatus">실시간 미리보기</span></span>
+          <span class="save-status" id="saveStatus" data-state="ready" role="status" aria-live="polite">자동 저장 준비 중…</span>
+        </div>
+        <div class="preview-actions">
+          <div class="history-actions" aria-label="편집 기록">
+            <button class="icon-button history-button" id="undoButton" type="button" disabled aria-label="실행 취소">↶ <span>실행 취소</span></button>
+            <button class="icon-button history-button" id="redoButton" type="button" disabled aria-label="다시 실행">↷ <span>다시 실행</span></button>
+          </div>
+          <div class="preview-zoom-controls" aria-label="미리보기 확대 축소">
+            <button class="icon-button" id="previewZoomOut" type="button" aria-label="미리보기 축소">−</button>
+            <button class="icon-button preview-zoom-value" id="previewZoomReset" type="button" title="미리보기 맞춤">100%</button>
+            <button class="icon-button" id="previewZoomIn" type="button" aria-label="미리보기 확대">＋</button>
+          </div>
+          <span id="previewSizeLabel">1920 × 1080</span>
+        </div>
       </div>
       <div class="canvas-stage" id="canvasStage">
         <canvas id="previewCanvas" aria-label="결과 미리보기"></canvas>
         <div class="canvas-hint" id="canvasHint">사진을 불러오거나 프레임을 클릭하세요</div>
       </div>
       <div class="preview-footer">
-        <span>드래그: 이동</span><span>휠: 확대/축소</span><span>클릭: 컷 선택</span>
+        <span>드래그: 이동</span><span>휠: 확대/축소</span><span>클릭: 컷 선택</span><span>더블클릭 / 길게 누르기: 사진 교체</span>
       </div>
     </section>
 
     <aside class="sidebar sidebar-right">
+      <section class="panel export-panel">
+        <div class="panel-heading compact-heading"><div><span class="panel-index">05</span><h2>내보내기</h2></div></div>
+        <label class="field"><span>파일명</span><input id="exportFilename" type="text" placeholder="입력하지 않으면 기본 이름"></label>
+        <div class="field-grid two-col"><label class="field"><span>파일 형식</span><select id="exportFormat"><option value="png">PNG</option><option value="jpg">JPG</option></select></label><label class="field"><span>PNG 배경</span><select id="exportPngBackground"><option value="transparent">투명 유지</option><option value="white">흰 배경</option></select></label></div>
+        <label class="field"><span>출력 배율</span><select id="exportScale"><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
+        <button class="button button-export button-full" id="exportButton">이미지 저장</button>
+        <p class="export-note" id="exportNote">브라우저에서 바로 렌더링하므로 사진은 서버로 전송되지 않습니다.</p>
+      </section>
+
       <section class="panel effect-stack">
         <div class="panel-heading"><div><span class="panel-index">04</span><h2>효과 스택</h2></div><span class="layer-order">위 → 아래</span></div>
 
@@ -325,7 +375,7 @@
             <input class="visually-hidden" id="overlayImageInput" type="file" accept="image/png,image/jpeg,image/webp">
             <label class="field"><span>혼합 모드</span><select id="overlayBlend"><option value="multiply">곱하기</option><option value="divide">나누기</option><option value="screen" selected>스크린</option><option value="overlay">오버레이</option><option value="lighten">비교(밝음)</option><option value="darken">비교(어두움)</option><option value="hard-light">하드 라이트</option><option value="soft-light">소프트 라이트</option><option value="color-dodge">발광</option></select></label>
             <label class="field range-field"><span>불투명도</span><div class="range-pair"><input id="overlayOpacity" type="range" min="0" max="100" value="35"><input id="overlayOpacityNumber" type="number" min="0" max="100" value="35"></div></label>
-            <label class="toggle-row"><input id="overlayIncludeFrame" type="checkbox"><span class="toggle-ui"></span><span>프레임까지 포함해 적용</span></label>
+            <label class="toggle-row"><input id="overlayIncludeFrame" type="checkbox"><span class="toggle-ui"></span><span>대지·프레임 전체에 확장 적용</span></label>
             <button class="button button-ghost button-full" id="overlayReseed">텍스처 다시 생성</button>
           </div>
         </details>
@@ -352,14 +402,7 @@
         </details>
       </section>
 
-      <section class="panel export-panel">
-        <div class="panel-heading compact-heading"><div><span class="panel-index">05</span><h2>내보내기</h2></div></div>
-        <label class="field"><span>파일명</span><input id="exportFilename" type="text" placeholder="입력하지 않으면 기본 이름"></label>
-        <div class="field-grid two-col"><label class="field"><span>파일 형식</span><select id="exportFormat"><option value="png">PNG</option><option value="jpg">JPG</option></select></label><label class="field"><span>PNG 배경</span><select id="exportPngBackground"><option value="transparent">투명 유지</option><option value="white">흰 배경</option></select></label></div>
-        <label class="field"><span>출력 배율</span><select id="exportScale"><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
-        <button class="button button-export button-full" id="exportButton">이미지 저장</button>
-        <p class="export-note" id="exportNote">브라우저에서 바로 렌더링하므로 사진은 서버로 전송되지 않습니다.</p>
-      </section>
+
     </aside>
   </main>
 
@@ -368,6 +411,6 @@
     <span>GitHub Pages ready</span>
   </footer>
 
-  <script src="./js/app.js"></script>
+  <script src="./js/app.js?v=3"></script>
 </body>
 </html>
