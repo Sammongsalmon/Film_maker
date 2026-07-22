@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#111514">
   <title>필름 프레임 메이커</title>
-  <link rel="stylesheet" href="./css/styles.css?v=10">
+  <link rel="stylesheet" href="./css/styles.css?v=12">
 </head>
 <body>
   <header class="app-header">
@@ -153,13 +153,13 @@
             <input class="visually-hidden" id="viewfinderImageInput" type="file" accept="image/png,image/jpeg,image/webp">
             <p class="field-help" id="viewfinderImageName">프레임 안쪽을 클릭해도 사진을 추가할 수 있습니다.</p>
           </div>
-          <label class="field">
-            <span>뷰파인더 종류</span>
-            <select id="viewfinderStyle">
-              <option value="digital">디지털 카메라</option>
-              <option value="film">필름 카메라</option>
-            </select>
-          </label>
+          <div class="field-group">
+            <span class="field-label">뷰파인더 종류</span>
+            <div class="segmented" role="group" aria-label="뷰파인더 종류">
+              <button class="segment is-active" type="button" data-viewfinder-style="digital">디지털 카메라</button>
+              <button class="segment" type="button" data-viewfinder-style="film">필름 카메라</button>
+            </div>
+          </div>
           <div class="segmented" role="group" aria-label="뷰파인더 방향">
             <button class="segment is-active" data-orientation-target="viewfinder" data-value="landscape">가로</button>
             <button class="segment" data-orientation-target="viewfinder" data-value="portrait">세로</button>
@@ -312,19 +312,19 @@
         </label>
         <div class="field-grid two-col">
           <label class="field">
-            <span>가이드 선 종류</span>
+            <span>삼분할선 종류</span>
             <select id="viewfinderGridStyle"><option value="solid">실선</option><option value="dashed">점선</option></select>
           </label>
           <label class="field">
-            <span>가이드 선 색상</span>
+            <span>삼분할선 색상</span>
             <select id="viewfinderGuideColor"><option value="white">흰색</option><option value="black">검정</option></select>
           </label>
           <label class="field">
-            <span>텍스트·아이콘 색상</span>
-            <select id="viewfinderTextColor"><option value="white">흰색</option><option value="black">검정</option></select>
+            <span>텍스트 색상</span>
+            <select id="viewfinderTextColor"><option value="white">흰색</option><option value="black">검정</option><option value="yellow">필름 옐로</option></select>
           </label>
           <label class="field">
-            <span>프레임 색상</span>
+            <span>프레임 / 아이콘 색상</span>
             <select id="viewfinderFrameColor"><option value="black">검정</option><option value="white">흰색</option></select>
           </label>
         </div>
@@ -389,9 +389,10 @@
           <button class="button button-ghost button-full" id="film35ApplyEffectsAll">현재 효과를 모든 컷에 복사</button>
         </div>
 
-        <details class="effect-card" open>
-          <summary><span class="effect-number">1</span><div><strong>그레인 / 노이즈</strong><small>가장 위 레이어</small></div><span class="summary-switch" id="grainSummaryState">OFF</span></summary>
+        <details class="effect-card" data-effect-key="grain" open>
+          <summary><span class="effect-number">1</span><div><strong>그레인 / 노이즈</strong><small>효과 레이어</small></div><div class="effect-card-actions"><button class="effect-move-button" type="button" data-effect-move="up" aria-label="그레인 레이어 위로">⌃</button><button class="effect-move-button" type="button" data-effect-move="down" aria-label="그레인 레이어 아래로">⌄</button><span class="summary-switch" id="grainSummaryState">OFF</span></div></summary>
           <div class="details-body">
+            <label class="field"><span>적용 영역</span><select id="grainScope"><option value="photo">사진 영역만</option><option value="all">전체 영역</option></select></label>
             <label class="toggle-row"><input id="grainEnabled" type="checkbox"><span class="toggle-ui"></span><span>필름 그레인 사용</span></label>
             <label class="field range-field"><span>양</span><div class="range-pair"><input id="grainAmount" type="range" min="0" max="100" value="28"><input id="grainAmountNumber" type="number" min="0" max="100" value="28"></div></label>
             <label class="field range-field"><span>크기</span><div class="range-pair"><input id="grainSize" type="range" min="1" max="100" value="32"><input id="grainSizeNumber" type="number" min="1" max="100" value="32"></div></label>
@@ -401,16 +402,15 @@
           </div>
         </details>
 
-        <details class="effect-card" open>
-          <summary><span class="effect-number">2</span><div><strong>텍스처 / 오버레이</strong><small>그레인 바로 아래</small></div><span class="summary-switch" id="overlaySummaryState">OFF</span></summary>
+        <details class="effect-card" data-effect-key="overlay" open>
+          <summary><span class="effect-number">2</span><div><strong>텍스처 / 오버레이</strong><small>효과 레이어</small></div><div class="effect-card-actions"><button class="effect-move-button" type="button" data-effect-move="up" aria-label="텍스처 레이어 위로">⌃</button><button class="effect-move-button" type="button" data-effect-move="down" aria-label="텍스처 레이어 아래로">⌄</button><span class="summary-switch" id="overlaySummaryState">OFF</span></div></summary>
           <div class="details-body">
+            <label class="field"><span>적용 영역</span><select id="overlayScope"><option value="photo">사진 영역만</option><option value="all">전체 영역</option></select></label>
             <label class="toggle-row"><input id="overlayEnabled" type="checkbox"><span class="toggle-ui"></span><span>오버레이 사용</span></label>
             <label class="field"><span>텍스처</span><select id="overlayType"><option value="custom">사용자 이미지</option></select></label>
             <div class="texture-library-tools">
-              <button class="button button-ghost" id="textureZipBtn" type="button">텍스처 ZIP 교체</button>
-              <span id="textureLibraryStatus" class="inline-status">내장 텍스처 없음</span>
+              <span id="textureLibraryStatus" class="inline-status">기본 텍스처 불러오는 중</span>
             </div>
-            <input class="visually-hidden" id="textureZipInput" type="file" accept=".zip,application/zip">
             <div class="button-row"><button class="button button-ghost" id="overlayUploadBtn">오버레이 이미지</button><span id="overlayImageName" class="inline-status">미등록</span></div>
             <input class="visually-hidden" id="overlayImageInput" type="file" accept="image/png,image/jpeg,image/webp">
             <label class="field"><span>혼합 모드</span><select id="overlayBlend"><option value="multiply">곱하기</option><option value="divide">나누기</option><option value="screen" selected>스크린</option><option value="overlay">오버레이</option><option value="lighten">비교(밝음)</option><option value="darken">비교(어두움)</option><option value="hard-light">하드 라이트</option><option value="soft-light">소프트 라이트</option><option value="color-dodge">발광</option></select></label>
@@ -420,14 +420,14 @@
               <label class="field range-field"><span>가로 위치</span><div class="range-pair compact-range"><input id="overlayX" type="range" min="-100" max="100" value="0"><input id="overlayXNumber" type="number" min="-100" max="100" value="0"></div></label>
               <label class="field range-field"><span>세로 위치</span><div class="range-pair compact-range"><input id="overlayY" type="range" min="-100" max="100" value="0"><input id="overlayYNumber" type="number" min="-100" max="100" value="0"></div></label>
             </div>
-            <label class="toggle-row"><input id="overlayIncludeFrame" type="checkbox"><span class="toggle-ui"></span><span>대지·프레임 전체에 확장 적용</span></label>
             <button class="button button-ghost button-full" id="overlayResetTransform" type="button">텍스처 위치·크기 초기화</button>
           </div>
         </details>
 
-        <details class="effect-card" open>
-          <summary><span class="effect-number">3</span><div><strong>빛샘</strong><small>오버레이 아래</small></div><span class="summary-switch" id="lightLeakSummaryState">OFF</span></summary>
+        <details class="effect-card" data-effect-key="lightLeak" open>
+          <summary><span class="effect-number">3</span><div><strong>빛샘</strong><small>효과 레이어</small></div><div class="effect-card-actions"><button class="effect-move-button" type="button" data-effect-move="up" aria-label="빛샘 레이어 위로">⌃</button><button class="effect-move-button" type="button" data-effect-move="down" aria-label="빛샘 레이어 아래로">⌄</button><span class="summary-switch" id="lightLeakSummaryState">OFF</span></div></summary>
           <div class="details-body">
+            <label class="field"><span>적용 영역</span><select id="lightLeakScope"><option value="photo">사진 영역만</option><option value="all">전체 영역</option></select></label>
             <label class="toggle-row"><input id="lightLeakEnabled" type="checkbox"><span class="toggle-ui"></span><span>빛샘 사용</span></label>
             <label class="toggle-row light-leak-per-cut" id="film35PerCutLightLeakRow" hidden><input id="film35PerCutLightLeak" type="checkbox"><span class="toggle-ui"></span><span>랜덤 생성 시 컷마다 다른 빛샘</span></label>
             <label class="field"><span>형태</span><select id="lightLeakType"><option value="edge-left">왼쪽 가장자리</option><option value="edge-right">오른쪽 가장자리</option><option value="corner-top">위쪽 모서리</option><option value="corner-bottom">아래쪽 모서리</option><option value="full">전체 번짐</option><option value="streak">세로 빛줄기</option><option value="random">랜덤 생성값</option></select></label>
@@ -438,9 +438,10 @@
           </div>
         </details>
 
-        <details class="effect-card" open>
-          <summary><span class="effect-number">4</span><div><strong>색감 필터</strong><small>이미지에 가장 먼저 적용</small></div><span class="summary-switch" id="filterSummaryState">NONE</span></summary>
+        <details class="effect-card" data-effect-key="filter" open>
+          <summary><span class="effect-number">4</span><div><strong>색감 필터</strong><small>효과 레이어</small></div><div class="effect-card-actions"><button class="effect-move-button" type="button" data-effect-move="up" aria-label="필터 레이어 위로">⌃</button><button class="effect-move-button" type="button" data-effect-move="down" aria-label="필터 레이어 아래로">⌄</button><span class="summary-switch" id="filterSummaryState">NONE</span></div></summary>
           <div class="details-body">
+            <label class="field"><span>적용 영역</span><select id="filterScope"><option value="photo">사진 영역만</option><option value="all">전체 영역</option></select></label>
             <button class="filter-picker-button" id="filterPickerButton"><span><strong id="filterPickerName">필터 없음</strong><small id="filterPickerDesc">원본 색감을 유지합니다.</small></span><span>필터 보기</span></button>
             <div class="filter-menu" id="filterMenu" hidden></div>
             <label class="field range-field"><span>필터 강도</span><div class="range-pair"><input id="filterStrength" type="range" min="0" max="100" value="100"><input id="filterStrengthNumber" type="number" min="0" max="100" value="100"></div></label>
@@ -457,6 +458,6 @@
     <span>GitHub Pages ready</span>
   </footer>
 
-  <script src="./js/app.js?v=10"></script>
+  <script src="./js/app.js?v=12"></script>
 </body>
 </html>

@@ -12,6 +12,45 @@
   const uidSeed = () => Math.floor(Math.random() * 0x7fffffff);
   const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
 
+  const FILM35_FRAME_HEIGHT_RATIO = 0.86;
+  const FILM35_PHOTO_X_RATIO = 0.026;
+  const FILM35_PHOTO_WIDTH_RATIO = 0.948;
+  const FILM35_JOIN_OVERLAP = 2;
+  const DEFAULT_TEXTURE_DEFINITIONS = [
+    { id: "builtin-snow1", category: "snow", name: "snow1", file: "snow1.png" },
+    { id: "builtin-snow2", category: "snow", name: "snow2", file: "snow2.png" },
+    { id: "builtin-snow3", category: "snow", name: "snow3", file: "snow3.png" },
+    { id: "builtin-snow4", category: "snow", name: "snow4", file: "snow4.jpg" },
+    { id: "builtin-rain1", category: "rain", name: "rain1", file: "rain1.png" },
+    { id: "builtin-rain2", category: "rain", name: "rain2", file: "rain2.png" },
+    { id: "builtin-bokeh1", category: "bokeh", name: "bokeh1", file: "bokeh1.png" },
+    { id: "builtin-bokeh2", category: "bokeh", name: "bokeh2", file: "bokeh2.png" },
+    { id: "builtin-bokeh3", category: "bokeh", name: "bokeh3", file: "bokeh3.jpg" },
+    { id: "builtin-bokeh4", category: "bokeh", name: "bokeh4", file: "bokeh4.jpg" },
+    { id: "builtin-bokeh5", category: "bokeh", name: "bokeh5", file: "bokeh5.jpg" },
+    { id: "builtin-bokeh6", category: "bokeh", name: "bokeh6", file: "bokeh6.jpg" },
+    { id: "builtin-bokeh7", category: "bokeh", name: "bokeh7", file: "bokeh7.jpg" },
+    { id: "builtin-scratch1", category: "scratch", name: "scratch1", file: "scratch1.png" },
+    { id: "builtin-scratch2", category: "scratch", name: "scratch2", file: "scratch2.png" },
+    { id: "builtin-grain1", category: "grain", name: "grain1", file: "grain1.png" },
+    { id: "builtin-grain2", category: "grain", name: "grain2", file: "grain2.png" },
+    { id: "builtin-grain3", category: "grain", name: "grain3", file: "grain3.png" },
+    { id: "builtin-particle1", category: "particle", name: "particle1", file: "particle1.jpg" }
+  ];
+
+  const TEXTURE_CATEGORY_ORDER = ["snow", "rain", "bokeh", "scratch", "grain", "particle"];
+
+  function getFilm35PhotoRect(width, height) {
+    const photoWidth = width * FILM35_PHOTO_WIDTH_RATIO;
+    const photoHeight = photoWidth / 1.5;
+    return {
+      x: width * FILM35_PHOTO_X_RATIO,
+      y: (height - photoHeight) / 2,
+      w: photoWidth,
+      h: photoHeight
+    };
+  }
+
   function mulberry32(seed) {
     let value = seed >>> 0;
     return () => {
@@ -27,12 +66,15 @@
     return { img: null, name: "", zoom: 1, x: 0, y: 0, angle: 0, quarter: 0 };
   }
 
+  const EFFECT_LAYER_KEYS = ["grain", "overlay", "lightLeak", "filter"];
+
   function makeEffects() {
     return {
-      filter: { id: "none", strength: 1 },
-      lightLeak: { enabled: false, type: "edge-left", color: "#ff8a38", intensity: 0.48, spread: 0.52, seed: uidSeed() },
-      overlay: { enabled: false, type: "custom", textureId: "", blend: "screen", opacity: 0.35, includeFrame: false, customImage: null, customName: "", zoom: 1, x: 0, y: 0, seed: uidSeed() },
-      grain: { enabled: false, amount: 0.28, size: 0.32, roughness: 0.52, color: false, seed: uidSeed() }
+      order: [...EFFECT_LAYER_KEYS],
+      filter: { id: "none", strength: 1, scope: "photo" },
+      lightLeak: { enabled: false, type: "edge-left", color: "#ff8a38", intensity: 0.48, spread: 0.52, seed: uidSeed(), scope: "photo" },
+      overlay: { enabled: false, type: "custom", textureId: "", blend: "screen", opacity: 0.35, includeFrame: false, customImage: null, customName: "", zoom: 1, x: 0, y: 0, seed: uidSeed(), scope: "photo" },
+      grain: { enabled: false, amount: 0.28, size: 0.32, roughness: 0.52, color: false, seed: uidSeed(), scope: "all" }
     };
   }
 
@@ -78,7 +120,7 @@
   const PROJECT_STORE_NAME = "projects";
   const PROJECT_RECORD_KEY = "active-project";
   const HISTORY_LIMIT = 40;
-  const PROJECT_VERSION = 10;
+  const PROJECT_VERSION = 12;
 
   const assetSources = new Map();
   let projectDbPromise = null;
@@ -194,7 +236,7 @@
       movie: state.movie,
       viewfinder: state.viewfinder,
       film120: state.film120,
-      textureLibrary: state.textureLibrary,
+      textureLibrary: [],
       film35: state.film35,
       ui
     };
@@ -301,12 +343,21 @@
   function normalizeEffectsObject(effects) {
     const defaults = makeEffects();
     const source = effects || {};
+    const rawOrder = Array.isArray(source.order) ? source.order.filter((key) => EFFECT_LAYER_KEYS.includes(key)) : [];
+    const order = [...rawOrder, ...EFFECT_LAYER_KEYS.filter((key) => !rawOrder.includes(key))];
     const normalized = {
+      order,
       filter: { ...defaults.filter, ...(source.filter || {}) },
       lightLeak: { ...defaults.lightLeak, ...(source.lightLeak || {}) },
       overlay: { ...defaults.overlay, ...(source.overlay || {}) },
       grain: { ...defaults.grain, ...(source.grain || {}) }
     };
+    const normalizeScope = (value, fallback) => value === "all" ? "all" : value === "photo" ? "photo" : fallback;
+    normalized.filter.scope = normalizeScope(normalized.filter.scope, "photo");
+    normalized.lightLeak.scope = normalizeScope(normalized.lightLeak.scope, "photo");
+    normalized.overlay.scope = normalizeScope(normalized.overlay.scope, source.overlay?.includeFrame ? "all" : "photo");
+    normalized.grain.scope = normalizeScope(normalized.grain.scope, "all");
+    normalized.overlay.includeFrame = normalized.overlay.scope === "all";
     normalized.overlay.zoom = clamp(Number(normalized.overlay.zoom) || 1, 1, 4);
     normalized.overlay.x = clamp(Number(normalized.overlay.x) || 0, -100, 100);
     normalized.overlay.y = clamp(Number(normalized.overlay.y) || 0, -100, 100);
@@ -334,7 +385,7 @@
     const legacyViewfinderUiColor = state.viewfinder.uiColor || state.viewfinder.gridColor || "white";
     state.viewfinder.gridStyle = state.viewfinder.gridStyle === "dashed" ? "dashed" : "solid";
     state.viewfinder.guideColor = state.viewfinder.guideColor === "black" ? "black" : (legacyViewfinderUiColor === "black" ? "black" : "white");
-    state.viewfinder.textColor = state.viewfinder.textColor === "black" ? "black" : (legacyViewfinderUiColor === "black" ? "black" : "white");
+    state.viewfinder.textColor = ["black", "white", "yellow"].includes(state.viewfinder.textColor) ? state.viewfinder.textColor : (legacyViewfinderUiColor === "black" ? "black" : "white");
     state.viewfinder.frameColor = state.viewfinder.frameColor === "white" ? "white" : "black";
     state.viewfinder.rec = state.viewfinder.rec !== false;
     delete state.viewfinder.uiColor;
@@ -347,12 +398,15 @@
     state.film120.effects = normalizeEffectsObject(state.film120.effects);
 
     if (!Array.isArray(state.textureLibrary)) state.textureLibrary = [];
-    state.textureLibrary = state.textureLibrary.filter((item) => item && item.img).map((item, index) => ({
+    state.textureLibrary = state.textureLibrary.filter((item) => item && (item.img || item.source)).map((item, index) => ({
       id: String(item.id || `texture-${index + 1}`),
       category: String(item.category || textureCategoryFromFilename(item.sourceName || item.name || "texture")),
       name: String(item.name || `texture${index + 1}`),
       sourceName: String(item.sourceName || item.name || ""),
-      img: item.img
+      source: String(item.source || ""),
+      builtin: Boolean(item.builtin),
+      loading: false,
+      img: item.img || null
     }));
 
     state.film35 ||= {};
@@ -389,12 +443,12 @@
     updateHistoryButtons();
     setSaveStatus("작업 복원 중…", "saving");
     try {
-      const hydrated = await hydrateSnapshotValue(snapshot);
+      const snapshotWithoutTextures = { ...snapshot, textureLibrary: [] };
+      const hydrated = await hydrateSnapshotValue(snapshotWithoutTextures);
       state.mode = hydrated.mode || "movie";
       state.movie = hydrated.movie || state.movie;
       state.viewfinder = hydrated.viewfinder || state.viewfinder;
       state.film120 = hydrated.film120 || state.film120;
-      state.textureLibrary = hydrated.textureLibrary || [];
       state.film35 = hydrated.film35 || state.film35;
       normalizeProjectState(hydrated.version);
       ensureCuts();
@@ -669,7 +723,7 @@
     else if (state.mode === "viewfinder") constrainImageToRect(state.viewfinder.image, layout.photoRectLocal || layout.photoRect);
     else if (state.mode === "film120") constrainImageToRect(state.film120.image, layout.photoRectLocal || layout.photoRect);
     else {
-      const rect = layout.canonicalPhotoRect || { x: 0, y: 0, w: layout.canonicalFrameWidth * 0.87, h: layout.canonicalFrameHeight * 0.69 };
+      const rect = layout.canonicalPhotoRect || getFilm35PhotoRect(layout.canonicalFrameWidth, layout.canonicalFrameHeight);
       state.film35.cuts.forEach((cut) => constrainImageToRect(cut.image, rect));
     }
   }
@@ -698,6 +752,34 @@
       img.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
       img.src = source;
     });
+  }
+
+  function loadDefaultTextureLibrary() {
+    state.textureLibrary = DEFAULT_TEXTURE_DEFINITIONS.map((definition) => ({
+      id: definition.id,
+      category: definition.category,
+      name: definition.name,
+      sourceName: definition.file,
+      source: `./assets/textures/${definition.file}`,
+      builtin: true,
+      loading: false,
+      img: null
+    }));
+  }
+
+  function ensureTextureImage(entry) {
+    if (!entry || entry.img || entry.loading || !entry.source) return;
+    entry.loading = true;
+    createImageFromSource(entry.source, entry.id)
+      .then((img) => {
+        entry.img = img;
+        entry.loading = false;
+        queueRender();
+      })
+      .catch((error) => {
+        entry.loading = false;
+        console.warn(`텍스처를 불러오지 못했습니다: ${entry.name}`, error);
+      });
   }
 
   async function loadImageFile(file, imageState, done) {
@@ -904,7 +986,10 @@
   function getOverlayImage(overlay) {
     if (!overlay) return null;
     if (overlay.type === "custom") return overlay.customImage || null;
-    return getTextureEntry(overlay.type)?.img || null;
+    const entry = getTextureEntry(overlay.type);
+    if (!entry) return null;
+    if (!entry.img) ensureTextureImage(entry);
+    return entry.img || null;
   }
 
   function drawOverlayCover(overlayCtx, width, height, overlay) {
@@ -1064,7 +1149,12 @@
       if (!groups.has(category)) groups.set(category, []);
       groups.get(category).push(item);
     });
-    [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, "ko")).forEach(([category, items]) => {
+    [...groups.entries()].sort(([a], [b]) => {
+      const ai = TEXTURE_CATEGORY_ORDER.indexOf(a);
+      const bi = TEXTURE_CATEGORY_ORDER.indexOf(b);
+      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+      return a.localeCompare(b, "ko");
+    }).forEach(([category, items]) => {
       const group = document.createElement("optgroup");
       group.label = category;
       items.forEach((item) => {
@@ -1080,7 +1170,7 @@
     overlay.type = valid ? current : (state.textureLibrary[0] ? `texture:${state.textureLibrary[0].id}` : "custom");
     select.value = overlay.type;
     const status = $("textureLibraryStatus");
-    if (status) status.textContent = state.textureLibrary.length ? `${state.textureLibrary.length}개 텍스처` : "텍스처 ZIP을 불러오세요";
+    if (status) status.textContent = state.textureLibrary.length ? `기본 텍스처 ${state.textureLibrary.length}개` : "기본 텍스처를 불러오는 중";
   }
 
   const grainCache = new Map();
@@ -1134,15 +1224,41 @@
     targetCtx.restore();
   }
 
+  function getEffectLayerOrder(effects) {
+    const order = Array.isArray(effects?.order) ? effects.order.filter((key) => EFFECT_LAYER_KEYS.includes(key)) : [];
+    return [...order, ...EFFECT_LAYER_KEYS.filter((key) => !order.includes(key))];
+  }
+
+  function applyEffectStackToCanvas(targetCanvas, effects, scope, renderScale = 1) {
+    if (!targetCanvas || !effects) return;
+    const logicalWidth = targetCanvas.width / renderScale;
+    const logicalHeight = targetCanvas.height / renderScale;
+    const targetCtx = targetCanvas.getContext("2d", { willReadFrequently: true });
+    [...getEffectLayerOrder(effects)].reverse().forEach((key) => {
+      const effect = effects[key];
+      if (!effect || effect.scope !== scope) return;
+      if (key === "filter") {
+        applyFilterToCanvas(targetCanvas, effect);
+      } else if (key === "lightLeak") {
+        targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+        drawLightLeak(targetCtx, logicalWidth, logicalHeight, effect);
+      } else if (key === "overlay") {
+        targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+        applyOverlayToCanvas(targetCanvas, effect);
+      } else if (key === "grain") {
+        targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+        drawGrain(targetCtx, 0, 0, logicalWidth, logicalHeight, effect);
+      }
+    });
+    targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+  }
+
   function renderPhotoLayer(imageState, width, height, effects, renderScale) {
     const layer = createSizedCanvas(width, height, renderScale);
     const layerCtx = layer.getContext("2d", { willReadFrequently: true });
     layerCtx.scale(renderScale, renderScale);
     drawTransformedImage(layerCtx, imageState, 0, 0, width, height);
-    applyFilterToCanvas(layer, effects.filter);
-    layerCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    drawLightLeak(layerCtx, width, height, effects.lightLeak);
-    if (effects.overlay.enabled && !effects.overlay.includeFrame) applyOverlayToCanvas(layer, effects.overlay);
+    applyEffectStackToCanvas(layer, effects, "photo", renderScale);
     return layer;
   }
 
@@ -1211,7 +1327,7 @@
     const localWidth = portrait ? width : height;
     const localHeight = portrait ? height : width;
     const frameRotation = portrait ? 0 : 90;
-    const margin = Math.min(localWidth, localHeight) * 0.038;
+    const margin = Math.min(localWidth, localHeight) * 0.028;
     const photoRectLocal = { x: margin, y: margin, w: localWidth - margin * 2, h: localHeight - margin * 2 };
     const photoRect = frameRotation === 90 ? rotateRectClockwise(photoRectLocal, localWidth, localHeight) : { ...photoRectLocal };
     return {
@@ -1279,11 +1395,11 @@
     if (f.sizeMode === "auto" && !f.fitCanvas) {
       const axisLength = portrait ? canvasHeight : canvasWidth;
       const usable = Math.max(160, axisLength * 0.88);
-      canonicalFrameWidth = clamp((usable + Math.max(0, perLine - 1)) / perLine, 120, 1600);
+      canonicalFrameWidth = Math.round(clamp((usable + Math.max(0, perLine - 1)) / perLine, 120, 1600));
     } else {
-      canonicalFrameWidth = f.frameWidth;
+      canonicalFrameWidth = Math.round(f.frameWidth);
     }
-    const canonicalFrameHeight = canonicalFrameWidth * 0.98;
+    const canonicalFrameHeight = Math.round(canonicalFrameWidth * FILM35_FRAME_HEIGHT_RATIO);
     const frameWidth = portrait ? canonicalFrameHeight : canonicalFrameWidth;
     const frameHeight = portrait ? canonicalFrameWidth : canonicalFrameHeight;
     const axisFrame = portrait ? frameHeight : frameWidth;
@@ -1293,7 +1409,7 @@
     const random = mulberry32(f.offsetSeed);
     for (let line = 0; line < lines; line++) {
       const count = Math.min(perLine, f.count - line * perLine);
-      lineLengths[line] = count * axisFrame - Math.max(0, count - 1);
+      lineLengths[line] = count * axisFrame - Math.max(0, count - 1) * FILM35_JOIN_OVERLAP;
       lineOffsets[line] = f.randomOffset ? (random() - 0.5) * 2 * f.offsetJitter : line * f.rowOffset;
     }
 
@@ -1327,8 +1443,8 @@
       for (let item = 0; item < count; item++) {
         const index = line * perLine + item;
         const position = portrait
-          ? { index, x: stripRect.x, y: stripRect.y + item * (frameHeight - 1), w: frameWidth, h: frameHeight, row: item, col: line, line }
-          : { index, x: stripRect.x + item * (frameWidth - 1), y: stripRect.y, w: frameWidth, h: frameHeight, row: line, col: item, line };
+          ? { index, x: stripRect.x, y: stripRect.y + item * (frameHeight - FILM35_JOIN_OVERLAP), w: frameWidth, h: frameHeight, row: item, col: line, line }
+          : { index, x: stripRect.x + item * (frameWidth - FILM35_JOIN_OVERLAP), y: stripRect.y, w: frameWidth, h: frameHeight, row: line, col: item, line };
         positions.push(position);
         strip.positions.push(position);
       }
@@ -1353,7 +1469,7 @@
     }
 
     strips.forEach((strip) => Object.assign(strip, transformedRectGeometry(strip.rect, strip.transform)));
-    const canonicalPhotoRect = { x: canonicalFrameWidth * 0.065, y: canonicalFrameHeight * 0.138, w: canonicalFrameWidth * 0.87, h: canonicalFrameHeight * 0.69 };
+    const canonicalPhotoRect = getFilm35PhotoRect(canonicalFrameWidth, canonicalFrameHeight);
     return {
       width: Math.max(1, Math.round(canvasWidth)), height: Math.max(1, Math.round(canvasHeight)),
       frameWidth, frameHeight, canonicalFrameWidth, canonicalFrameHeight, canonicalPhotoRect,
@@ -1466,7 +1582,7 @@
   function viewfinderTone(kind = "text", alpha = 1) {
     const v = state.viewfinder;
     const choice = kind === "frame" ? v.frameColor : kind === "guide" ? v.guideColor : v.textColor;
-    const channel = choice === "black" ? "0,0,0" : "255,255,255";
+    const channel = choice === "black" ? "0,0,0" : choice === "yellow" ? "239,198,115" : "255,255,255";
     return `rgba(${channel},${clamp(alpha, 0, 1)})`;
   }
 
@@ -1558,11 +1674,14 @@
       targetCtx.textAlign = "left";
       targetCtx.textBaseline = "middle";
       targetCtx.fillText("REC", recDotX + unit * 0.034, recY);
-      drawBattery(targetCtx, width * 0.82, recY - unit * 0.018, unit * 0.095, unit * 0.036, textStrong);
+      const rightAlignX = width * 0.91;
+      const batteryW = unit * 0.076;
+      const batteryH = unit * 0.029;
+      drawBattery(targetCtx, rightAlignX - batteryW, recY - batteryH / 2, batteryW, batteryH, frameStrong);
       targetCtx.fillStyle = textStrong;
       targetCtx.font = `750 ${unit * 0.024}px PretendardVariable`;
       targetCtx.textAlign = "right";
-      targetCtx.fillText("4K", width * 0.91, height * 0.875);
+      targetCtx.fillText("4K", rightAlignX, height * 0.875);
     }
     targetCtx.restore();
   }
@@ -1692,8 +1811,8 @@
   }
 
   function drawVerticalFilmMark(targetCtx, x, y, text, side, unit) {
-    const triangleX = side === "left" ? x + unit * 0.028 : x - unit * 0.028;
-    drawTriangle(targetCtx, triangleX, y, unit * 0.0228, "down");
+    const triangleY = y - unit * 0.052;
+    drawTriangle(targetCtx, x, triangleY, unit * 0.0274, "down");
     targetCtx.save();
     targetCtx.translate(x, y);
     targetCtx.rotate(side === "left" ? -Math.PI / 2 : Math.PI / 2);
@@ -1760,7 +1879,7 @@
     const markerColor = "#e9c693";
     cutCtx.fillStyle = frameColor;
     cutCtx.fillRect(0, 0, width, height);
-    const photo = { x: width * 0.065, y: height * 0.138, w: width * 0.87, h: height * 0.69 };
+    const photo = getFilm35PhotoRect(width, height);
     if (cut.image.img) {
       const layer = renderPhotoLayer(cut.image, photo.w, photo.h, effects, renderScale);
       cutCtx.drawImage(layer, photo.x, photo.y, photo.w, photo.h);
@@ -1773,27 +1892,29 @@
     }
 
     cutCtx.fillStyle = markerColor;
-    const tri = width * 0.054;
-    [0.014, 0.49, 0.93].forEach((x) => {
-      drawTriangle(cutCtx, width * x, height * 0.035, tri, "right");
-      drawTriangle(cutCtx, width * x, height * 0.955, tri, "right");
+    const tri = width * 0.05;
+    const markerPositions = [0.02, 0.52];
+    const topMarkY = height * 0.018;
+    const bottomMarkY = height * 0.982;
+    markerPositions.forEach((x) => {
+      drawTriangle(cutCtx, width * x, topMarkY, tri, "right");
+      drawTriangle(cutCtx, width * x, bottomMarkY, tri, "right");
     });
-    const edgeFontSize = width * 0.025;
+    const edgeFontSize = width * 0.019;
     cutCtx.font = `700 ${edgeFontSize}px PretendardVariable`;
     cutCtx.textAlign = "left";
     cutCtx.textBaseline = "middle";
-    cutCtx.fillText(String(index + 1).padStart(2, "0"), width * 0.57, height * 0.035);
-    cutCtx.fillText(String(index + 1).padStart(2, "0"), width * 0.57, height * 0.955);
+    cutCtx.fillText(String(index + 1).padStart(2, "0"), width * 0.585, topMarkY);
+    cutCtx.fillText(String(index + 1).padStart(2, "0"), width * 0.585, bottomMarkY);
     if (state.film35.textEnabled && index % 2 === 0 && state.film35.edgeText.trim()) {
       cutCtx.font = `650 ${edgeFontSize}px PretendardVariable`;
       const label = state.film35.edgeText.toUpperCase();
-      cutCtx.fillText(label, width * 0.075, height * 0.035);
-      cutCtx.fillText(label, width * 0.075, height * 0.955);
+      cutCtx.fillText(label, width * 0.085, topMarkY);
+      cutCtx.fillText(label, width * 0.085, bottomMarkY);
     }
 
-    if (effects.overlay.enabled && effects.overlay.includeFrame) applyOverlayToCanvas(cutCanvas, effects.overlay);
+    applyEffectStackToCanvas(cutCanvas, effects, "all", renderScale);
     cutCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    drawGrain(cutCtx, 0, 0, width, height, effects.grain);
 
     const holes = 10;
     const holeW = width * 0.044;
@@ -1809,7 +1930,7 @@
     }
     cutCtx.restore();
 
-    if (!exportMode && selected) {
+    if (!exportMode && selected && state.film35.count === 1) {
       cutCtx.strokeStyle = "#59d4bd";
       cutCtx.lineWidth = Math.max(2, width * 0.012);
       cutCtx.strokeRect(width * 0.008, height * 0.008, width * 0.984, height * 0.984);
@@ -1897,14 +2018,9 @@
     }
     const layer = renderPhotoLayer(m.image, layout.photoRect.w, layout.photoRect.h, m.effects, renderScale);
     targetCtx.drawImage(layer, layout.photoRect.x, layout.photoRect.y, layout.photoRect.w, layout.photoRect.h);
-    if (m.effects.overlay.enabled && m.effects.overlay.includeFrame) {
-      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-      applyOverlayToCanvas(targetCanvas, m.effects.overlay);
-      targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    }
-    drawGrain(targetCtx, 0, 0, layout.width, layout.height, m.effects.grain);
     if (m.barsEnabled) drawMovieBarsMask(targetCtx, layout, m.barColor);
     drawSubtitle(targetCtx, layout.width, layout.height);
+    applyEffectStackToCanvas(targetCanvas, m.effects, "all", renderScale);
     return [{ index: 0, rect: layout.photoRect, localRect: layout.photoRect, rotation: 0, image: m.image }];
   }
 
@@ -1938,12 +2054,7 @@
       localCtx.restore();
       drawViewfinderFrame(localCtx, width, height, photoRect, edgeColor);
     });
-    if (v.effects.overlay.enabled && v.effects.overlay.includeFrame) {
-      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-      applyOverlayToCanvas(targetCanvas, v.effects.overlay);
-      targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    }
-    drawGrain(targetCtx, 0, 0, layout.width, layout.height, v.effects.grain);
+    applyEffectStackToCanvas(targetCanvas, v.effects, "all", renderScale);
     return [{ index: 0, rect: layout.photoRect, localRect: layout.photoRectLocal, rotation: layout.frameRotation, image: v.image }];
   }
 
@@ -1958,12 +2069,7 @@
       localCtx.drawImage(layer, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
       drawFilm120Frame(localCtx, width, height, photoRect);
     });
-    if (f.effects.overlay.enabled && f.effects.overlay.includeFrame) {
-      targetCtx.setTransform(1, 0, 0, 1, 0, 0);
-      applyOverlayToCanvas(targetCanvas, f.effects.overlay);
-      targetCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    }
-    drawGrain(targetCtx, 0, 0, layout.width, layout.height, f.effects.grain);
+    applyEffectStackToCanvas(targetCanvas, f.effects, "all", renderScale);
     return [{ index: 0, rect: layout.photoRect, localRect: layout.photoRectLocal, rotation: layout.frameRotation, image: f.image }];
   }
 
@@ -2014,19 +2120,11 @@
 
     orderedStrips.forEach((strip) => {
       const renderedCuts = [];
-      const t = strip.transform;
-      const cx = strip.rect.x + strip.rect.w / 2;
-      const cy = strip.rect.y + strip.rect.h / 2;
-      targetCtx.save();
-      targetCtx.translate(cx + t.x, cy + t.y);
-      targetCtx.rotate(deg(t.rotation));
-      targetCtx.scale(t.scale, t.scale);
-      if (f.shadow.enabled && !layout.transparentFit) {
-        targetCtx.shadowColor = rgba(f.shadow.color, f.shadow.opacity);
-        targetCtx.shadowBlur = f.shadow.blur;
-        targetCtx.shadowOffsetX = f.shadow.x;
-        targetCtx.shadowOffsetY = f.shadow.y;
-      }
+      const stripCanvas = createSizedCanvas(strip.rect.w, strip.rect.h, renderScale);
+      const stripCtx = stripCanvas.getContext("2d", { willReadFrequently: true });
+      stripCtx.scale(renderScale, renderScale);
+      stripCtx.imageSmoothingEnabled = false;
+
       strip.positions.forEach((position) => {
         const cut = f.cuts[position.index];
         const effects = f.effectScope === "all" ? f.globalEffects : cut.effects;
@@ -2041,9 +2139,27 @@
           exportMode,
           layout.frameRotation
         );
-        targetCtx.drawImage(rendered.canvas, position.x - cx, position.y - cy, position.w, position.h);
+        const localX = position.x - strip.rect.x;
+        const localY = position.y - strip.rect.y;
+        stripCtx.drawImage(rendered.canvas, localX, localY, position.w, position.h);
         renderedCuts.push({ position, rendered, cut });
       });
+
+      const t = strip.transform;
+      const cx = strip.rect.x + strip.rect.w / 2;
+      const cy = strip.rect.y + strip.rect.h / 2;
+      targetCtx.save();
+      targetCtx.translate(cx + t.x, cy + t.y);
+      targetCtx.rotate(deg(t.rotation));
+      targetCtx.scale(t.scale, t.scale);
+      if (f.shadow.enabled && !layout.transparentFit) {
+        targetCtx.shadowColor = rgba(f.shadow.color, f.shadow.opacity);
+        targetCtx.shadowBlur = f.shadow.blur;
+        targetCtx.shadowOffsetX = f.shadow.x;
+        targetCtx.shadowOffsetY = f.shadow.y;
+      }
+      targetCtx.imageSmoothingEnabled = false;
+      targetCtx.drawImage(stripCanvas, -strip.rect.w / 2, -strip.rect.h / 2, strip.rect.w, strip.rect.h);
       targetCtx.restore();
 
       if (f.freeTransform) {
@@ -2642,13 +2758,45 @@
     setPairValues("imageAngle", "imageAngleNumber", Math.round((image.angle || 0) * 10) / 10);
   }
 
+  function syncEffectOrderUI() {
+    const effects = getActiveEffects();
+    effects.order = getEffectLayerOrder(effects);
+    const stack = document.querySelector(".effect-stack");
+    if (!stack) return;
+    effects.order.forEach((key, index) => {
+      const card = stack.querySelector(`.effect-card[data-effect-key="${key}"]`);
+      if (!card) return;
+      stack.appendChild(card);
+      const number = card.querySelector(".effect-number");
+      if (number) number.textContent = String(index + 1);
+      const up = card.querySelector('[data-effect-move="up"]');
+      const down = card.querySelector('[data-effect-move="down"]');
+      if (up) up.disabled = index === 0;
+      if (down) down.disabled = index === effects.order.length - 1;
+    });
+  }
+
+  function moveEffectLayer(key, direction) {
+    const effects = getActiveEffects();
+    const order = getEffectLayerOrder(effects);
+    const index = order.indexOf(key);
+    const next = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || next < 0 || next >= order.length) return;
+    [order[index], order[next]] = [order[next], order[index]];
+    effects.order = order;
+    syncEffectOrderUI();
+    queueRender();
+  }
+
   function syncEffectsUI() {
     const e = getActiveEffects();
+    $("grainScope").value = e.grain.scope;
     $("grainEnabled").checked = e.grain.enabled;
     setPairValues("grainAmount", "grainAmountNumber", Math.round(e.grain.amount * 100));
     setPairValues("grainSize", "grainSizeNumber", Math.round(e.grain.size * 100));
     setPairValues("grainRoughness", "grainRoughnessNumber", Math.round(e.grain.roughness * 100));
     $("grainColor").checked = e.grain.color;
+    $("overlayScope").value = e.overlay.scope;
     $("overlayEnabled").checked = e.overlay.enabled;
     syncTextureLibraryUI();
     $("overlayType").value = e.overlay.type;
@@ -2657,17 +2805,19 @@
     setPairValues("overlayZoom", "overlayZoomNumber", Math.round(e.overlay.zoom * 100));
     setPairValues("overlayX", "overlayXNumber", Math.round(e.overlay.x));
     setPairValues("overlayY", "overlayYNumber", Math.round(e.overlay.y));
-    $("overlayIncludeFrame").checked = e.overlay.includeFrame;
     const selectedTexture = getTextureEntry(e.overlay.type);
     $("overlayImageName").textContent = e.overlay.type === "custom" ? (e.overlay.customName || "미등록") : (selectedTexture?.sourceName || selectedTexture?.name || "텍스처 선택");
+    $("lightLeakScope").value = e.lightLeak.scope;
     $("lightLeakEnabled").checked = e.lightLeak.enabled;
     $("lightLeakType").value = e.lightLeak.type;
     $("lightLeakColor").value = e.lightLeak.color;
     $("lightLeakColorText").value = e.lightLeak.color;
     setPairValues("lightLeakIntensity", "lightLeakIntensityNumber", Math.round(e.lightLeak.intensity * 100));
     setPairValues("lightLeakSpread", "lightLeakSpreadNumber", Math.round(e.lightLeak.spread * 100));
+    $("filterScope").value = e.filter.scope;
     setPairValues("filterStrength", "filterStrengthNumber", Math.round(e.filter.strength * 100));
     updateFilterPicker(e.filter.id);
+    syncEffectOrderUI();
     updateEffectSummary();
   }
 
@@ -2805,7 +2955,7 @@
     if (state.mode === "movie") syncMovieUI();
     if (state.mode === "film35") syncFilm35UI();
     $("viewfinderImageName").textContent = state.viewfinder.image.name || "프레임 안쪽을 클릭해도 사진을 추가할 수 있습니다.";
-    $("viewfinderStyle").value = state.viewfinder.style;
+    $$('[data-viewfinder-style]').forEach((button) => button.classList.toggle("is-active", button.dataset.viewfinderStyle === state.viewfinder.style));
     setPairValues("viewfinderWidth", "viewfinderWidthNumber", state.viewfinder.width);
     $("viewfinderGrid").checked = state.viewfinder.grid;
     $("viewfinderGridStyle").value = state.viewfinder.gridStyle;
@@ -2822,7 +2972,6 @@
     $("film120EdgeText").value = state.film120.edgeText;
     syncTransformUI();
     syncEffectsUI();
-    syncAllInlineColorPickers();
     updateCanvasHint();
   }
 
@@ -2888,7 +3037,12 @@
     bindValue("movieBarSize", () => state.movie.barSize, (v) => state.movie.barSize = clamp(v, 0, 2048));
     bindColor("movieBarColor", "movieBarColorText", () => state.movie.barColor, (v) => state.movie.barColor = v);
 
-    bindValue("viewfinderStyle", () => state.viewfinder.style, (v) => state.viewfinder.style = v, "change", syncModeUI);
+    $$('[data-viewfinder-style]').forEach((button) => button.addEventListener("click", () => {
+      state.viewfinder.style = button.dataset.viewfinderStyle;
+      syncModeUI();
+      constrainActiveImage();
+      queueRender();
+    }));
     bindRangePair("viewfinderWidth", "viewfinderWidthNumber", () => state.viewfinder.width, (v) => state.viewfinder.width = clamp(v, 640, 4096), { after: constrainActiveImage });
     bindValue("viewfinderGrid", () => state.viewfinder.grid, (v) => state.viewfinder.grid = v, "change");
     bindValue("viewfinderGridStyle", () => state.viewfinder.gridStyle, (v) => state.viewfinder.gridStyle = v, "change");
@@ -3034,6 +3188,7 @@
     bindRangePair("film35PatternJitter", "film35PatternJitterNumber", () => state.film35.background.jitter, (v) => state.film35.background.jitter = clamp(v, 0, 180));
     $("film35ShufflePattern").addEventListener("click", () => { state.film35.background.seed = uidSeed(); queueRender(); });
 
+    bindValue("grainScope", () => getActiveEffects().grain.scope, (v) => getActiveEffects().grain.scope = v, "change");
     bindValue("grainEnabled", () => getActiveEffects().grain.enabled, (v) => getActiveEffects().grain.enabled = v, "change", updateEffectSummary);
     bindRangePair("grainAmount", "grainAmountNumber", () => getActiveEffects().grain.amount * 100, (v) => getActiveEffects().grain.amount = clamp(v / 100, 0, 1), { after: updateEffectSummary });
     bindRangePair("grainSize", "grainSizeNumber", () => getActiveEffects().grain.size * 100, (v) => getActiveEffects().grain.size = clamp(v / 100, .01, 1));
@@ -3041,6 +3196,7 @@
     bindValue("grainColor", () => getActiveEffects().grain.color, (v) => getActiveEffects().grain.color = v, "change");
     $("grainReseed").addEventListener("click", () => { getActiveEffects().grain.seed = uidSeed(); grainCache.clear(); queueRender(); });
 
+    bindValue("overlayScope", () => getActiveEffects().overlay.scope, (v) => { const overlay = getActiveEffects().overlay; overlay.scope = v; overlay.includeFrame = v === "all"; }, "change");
     bindValue("overlayEnabled", () => getActiveEffects().overlay.enabled, (v) => getActiveEffects().overlay.enabled = v, "change", updateEffectSummary);
     bindValue("overlayType", () => getActiveEffects().overlay.type, (v) => { const overlay = getActiveEffects().overlay; overlay.type = v; overlay.enabled = true; }, "change", syncEffectsUI);
     bindValue("overlayBlend", () => getActiveEffects().overlay.blend, (v) => getActiveEffects().overlay.blend = v, "change");
@@ -3048,35 +3204,9 @@
     bindRangePair("overlayZoom", "overlayZoomNumber", () => getActiveEffects().overlay.zoom * 100, (v) => getActiveEffects().overlay.zoom = clamp(v / 100, 1, 4));
     bindRangePair("overlayX", "overlayXNumber", () => getActiveEffects().overlay.x, (v) => getActiveEffects().overlay.x = clamp(v, -100, 100));
     bindRangePair("overlayY", "overlayYNumber", () => getActiveEffects().overlay.y, (v) => getActiveEffects().overlay.y = clamp(v, -100, 100));
-    bindValue("overlayIncludeFrame", () => getActiveEffects().overlay.includeFrame, (v) => getActiveEffects().overlay.includeFrame = v, "change");
     $("overlayResetTransform").addEventListener("click", () => {
       Object.assign(getActiveEffects().overlay, { zoom: 1, x: 0, y: 0 });
       syncEffectsUI(); queueRender();
-    });
-    $("textureZipBtn").addEventListener("click", () => $("textureZipInput").click());
-    $("textureZipInput").addEventListener("change", async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      const status = $("textureLibraryStatus");
-      const button = $("textureZipBtn");
-      status.textContent = "ZIP 읽는 중…";
-      button.disabled = true;
-      try {
-        const library = await extractTextureZip(file);
-        state.textureLibrary = library;
-        const overlay = getActiveEffects().overlay;
-        overlay.type = library[0] ? `texture:${library[0].id}` : "custom";
-        overlay.enabled = Boolean(library.length) || overlay.enabled;
-        syncEffectsUI();
-        queueRender();
-      } catch (error) {
-        console.error(error);
-        status.textContent = "ZIP 불러오기 실패";
-        alert(error.message || "텍스처 ZIP을 읽지 못했습니다.");
-      } finally {
-        button.disabled = false;
-        event.target.value = "";
-      }
     });
     $("overlayUploadBtn").addEventListener("click", () => $("overlayImageInput").click());
     $("overlayImageInput").addEventListener("change", (event) => {
@@ -3095,6 +3225,7 @@
       event.target.value = "";
     });
 
+    bindValue("lightLeakScope", () => getActiveEffects().lightLeak.scope, (v) => getActiveEffects().lightLeak.scope = v, "change");
     bindValue("lightLeakEnabled", () => getActiveEffects().lightLeak.enabled, (v) => getActiveEffects().lightLeak.enabled = v, "change", updateEffectSummary);
     bindValue("lightLeakType", () => getActiveEffects().lightLeak.type, (v) => getActiveEffects().lightLeak.type = v, "change");
     bindColor("lightLeakColor", "lightLeakColorText", () => getActiveEffects().lightLeak.color, (v) => getActiveEffects().lightLeak.color = v);
@@ -3114,8 +3245,19 @@
       syncEffectsUI(); queueRender();
     });
 
+    bindValue("filterScope", () => getActiveEffects().filter.scope, (v) => getActiveEffects().filter.scope = v, "change");
     bindRangePair("filterStrength", "filterStrengthNumber", () => getActiveEffects().filter.strength * 100, (v) => getActiveEffects().filter.strength = clamp(v / 100, 0, 1));
     $("filterPickerButton").addEventListener("click", () => $("filterMenu").hidden = !$("filterMenu").hidden);
+
+    $$('[data-effect-move]').forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const card = button.closest(".effect-card");
+        moveEffectLayer(card?.dataset.effectKey, button.dataset.effectMove);
+      });
+      button.addEventListener("pointerdown", (event) => event.stopPropagation());
+    });
 
     $("previewZoomOut").addEventListener("click", () => setPreviewZoom(state.previewZoom - 0.25));
     $("previewZoomReset").addEventListener("click", () => setPreviewZoom(1));
@@ -3155,6 +3297,7 @@
 
   function cloneEffects(source) {
     const result = makeEffects();
+    result.order = [...getEffectLayerOrder(source)];
     result.filter = { ...source.filter };
     result.lightLeak = { ...source.lightLeak };
     result.overlay = { ...source.overlay, customImage: source.overlay.customImage };
@@ -3215,11 +3358,11 @@
 
   async function initializeApp() {
     setupFilterMenu();
-    setupInlineColorPickers();
     bindControls();
     $$("input[type=range]").forEach(updateRangeVisual);
-    syncModeUI();
     updateHistoryButtons();
+    loadDefaultTextureLibrary();
+    syncModeUI();
 
     const saved = await readSavedProject();
     if (saved?.snapshot) {
