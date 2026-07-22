@@ -1835,8 +1835,13 @@
     targetCtx.font = `700 ${u * 0.019}px PretendardVariable`;
     targetCtx.textAlign = "center";
     targetCtx.textBaseline = "middle";
-    const leftX = u * 0.03;
-    const rightX = width - u * 0.03;
+    // Place all markings in the middle of the actual frame band. In landscape
+    // mode this local portrait frame is rotated as a whole, so these tracks
+    // become the top and bottom bands without overlapping the photo area.
+    const leftBand = Math.max(1, photoRect.x);
+    const rightBand = Math.max(1, width - photoRect.x - photoRect.w);
+    const leftX = leftBand * 0.5;
+    const rightX = photoRect.x + photoRect.w + rightBand * 0.5;
     drawVerticalFilmMark(targetCtx, leftX, height * 0.28, f.number, "left", u);
     drawVerticalFilmMark(targetCtx, leftX, height * 0.72, f.number, "left", u);
     drawVerticalFilmMark(targetCtx, rightX, height * 0.18, f.edgeText, "right", u);
@@ -1844,7 +1849,7 @@
     drawVerticalFilmMark(targetCtx, rightX, height * 0.82, f.edgeText, "right", u);
 
     targetCtx.save();
-    targetCtx.translate(u * 0.026, height - u * 0.055);
+    targetCtx.translate(leftX, height - u * 0.055);
     targetCtx.rotate(-Math.PI / 2);
     targetCtx.font = `700 ${u * 0.019}px PretendardVariable`;
     targetCtx.fillText(String(f.cutNumber || "01").padStart(2, "0"), 0, 0);
@@ -2073,13 +2078,31 @@
     return [{ index: 0, rect: layout.photoRect, localRect: layout.photoRectLocal, rotation: layout.frameRotation, image: f.image }];
   }
 
+  function getPreviewCssPixelsPerLogicalPixel(layout) {
+    const stageStyle = getComputedStyle(canvasStage);
+    const padX = parseFloat(stageStyle.paddingLeft || 0) + parseFloat(stageStyle.paddingRight || 0);
+    const padY = parseFloat(stageStyle.paddingTop || 0) + parseFloat(stageStyle.paddingBottom || 0);
+    const availableWidth = Math.max(180, canvasStage.clientWidth - padX);
+    const availableHeight = Math.max(220, canvasStage.clientHeight - padY);
+    const intrinsicWidth = Math.max(1, layout.width * state.renderScale);
+    const intrinsicHeight = Math.max(1, layout.height * state.renderScale);
+    const fitScale = Math.min(1, availableWidth / intrinsicWidth, availableHeight / intrinsicHeight);
+    return Math.max(0.04, state.renderScale * fitScale * state.previewZoom);
+  }
+
   function drawFilm35TransformOutline(targetCtx, strip, layout) {
     const transform = strip.transform;
-    const handleSize = Math.max(14, Math.min(layout.width, layout.height) * 0.012);
-    const lineWidth = Math.max(2, handleSize * 0.12);
+    // Keep the handles comfortably clickable even when a large canvas is fitted
+    // into a small preview. The previous 14 logical-pixel handle became only
+    // about 4-6 CSS pixels in common layouts.
+    const cssScale = getPreviewCssPixelsPerLogicalPixel(layout);
+    const handleSize = clamp(13 / cssScale, 22, Math.min(layout.width, layout.height) * 0.055);
+    const hitRadius = Math.max(handleSize * 1.45, 20 / cssScale);
+    const lineWidth = Math.max(2 / cssScale, handleSize * 0.1);
     const corners = strip.quad;
     const topMidLocal = { x: strip.rect.x + strip.rect.w / 2, y: strip.rect.y };
-    const rotateLocal = { x: topMidLocal.x, y: strip.rect.y - handleSize * 3 / transform.scale };
+    const rotateGap = Math.max(handleSize * 2.7, 46 / cssScale);
+    const rotateLocal = { x: topMidLocal.x, y: strip.rect.y - rotateGap / Math.max(0.1, transform.scale) };
     const topMid = transformStripPoint(topMidLocal, strip.rect, transform);
     const rotate = transformStripPoint(rotateLocal, strip.rect, transform);
 
@@ -2103,11 +2126,20 @@
       targetCtx.strokeRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
     });
     targetCtx.beginPath();
-    targetCtx.arc(rotate.x, rotate.y, handleSize * 0.62, 0, Math.PI * 2);
+    targetCtx.arc(rotate.x, rotate.y, handleSize * 0.68, 0, Math.PI * 2);
     targetCtx.fill();
     targetCtx.stroke();
     targetCtx.restore();
-    return { corners, rotate, radius: handleSize * 0.95, center: { x: strip.rect.x + strip.rect.w / 2 + transform.x, y: strip.rect.y + strip.rect.h / 2 + transform.y } };
+    return {
+      corners,
+      rotate,
+      radius: hitRadius,
+      handleSize,
+      center: {
+        x: strip.rect.x + strip.rect.w / 2 + transform.x,
+        y: strip.rect.y + strip.rect.h / 2 + transform.y
+      }
+    };
   }
 
   function drawFilm35(targetCanvas, layout, renderScale, exportMode) {
@@ -2312,9 +2344,21 @@
     const hit = state.hitMap.find((item) => item.type === "strip" && item.line === state.film35.selectedStrip);
     const handles = hit?.handles;
     if (!handles) return null;
-    if (pointDistance(point, handles.rotate) <= handles.radius) return { type: "rotate", hit, point: handles.rotate };
-    const corner = handles.corners.find((handle) => pointDistance(point, handle) <= handles.radius);
-    if (corner) return { type: "scale", hit, point: corner };
+    if (pointDistance(point, handles.rotate) <= handles.radius) {
+      return { type: "rotate", hit, point: handles.rotate };
+    }
+    let nearestCorner = null;
+    let nearestDistance = Infinity;
+    handles.corners.forEach((handle) => {
+      const distance = pointDistance(point, handle);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestCorner = handle;
+      }
+    });
+    if (nearestCorner && nearestDistance <= handles.radius) {
+      return { type: "scale", hit, point: nearestCorner };
+    }
     return null;
   }
 
