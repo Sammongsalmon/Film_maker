@@ -31,7 +31,7 @@
     return {
       filter: { id: "none", strength: 1 },
       lightLeak: { enabled: false, type: "edge-left", color: "#ff8a38", intensity: 0.48, spread: 0.52, seed: uidSeed() },
-      overlay: { enabled: false, type: "dust", blend: "screen", opacity: 0.35, includeFrame: false, customImage: null, customName: "", seed: uidSeed() },
+      overlay: { enabled: false, type: "custom", textureId: "", blend: "screen", opacity: 0.35, includeFrame: false, customImage: null, customName: "", zoom: 1, x: 0, y: 0, seed: uidSeed() },
       grain: { enabled: false, amount: 0.28, size: 0.32, roughness: 0.52, color: false, seed: uidSeed() }
     };
   }
@@ -55,16 +55,18 @@
         enabled: true, text: "이 장면을 오래 기억하고 싶어.//그때의 빛까지도.", template: "classic",
         font: "Gulim", customFontLoaded: false, customFontName: "", customFontSource: "", customFontAssetId: "", autoSize: true,
         size: 54, weight: 500, color: "#ffffff", strokeColor: "#000000", strokeWidth: 2,
-        italic: false, letterSpacing: 0, lineHeight: 1.35, anchor: "bottom-center", x: 0, y: -8
+        bold: false, italic: false, letterSpacing: 0, lineHeight: 1.35, anchor: "bottom-center", x: 0, y: -8
       }
     },
-    viewfinder: { image: makeImageState(), effects: makeEffects(), orientation: "landscape", style: "digital", width: 1920, grid: true, gridColor: "white", rec: true },
+    viewfinder: { image: makeImageState(), effects: makeEffects(), orientation: "landscape", style: "digital", width: 1920, grid: true, gridStyle: "solid", guideColor: "white", textColor: "white", frameColor: "black", rec: true },
     film120: { image: makeImageState(), effects: makeEffects(), orientation: "landscape", width: 1600, frameColor: "#201416", number: "120", cutNumber: "01", edgeText: "400" },
+    textureLibrary: [],
     film35: {
       count: 1, breakEvery: 6, selected: 0, effectScope: "all", perCutLightLeak: false, orientation: "landscape", globalEffects: makeEffects(), cuts: Array.from({ length: 1 }, makeCut),
       rowGap: 120, rowOffset: 0, randomOffset: false, offsetJitter: 160, offsetSeed: uidSeed(),
+      freeTransform: false, selectedStrip: 0, stripTransforms: [{ x: 0, y: 0, scale: 1, rotation: 0, z: 0 }],
       textEnabled: true, edgeText: "KODAK 400", fitCanvas: false, canvasPreset: "2048x2048", canvasWidth: 2048, canvasHeight: 2048,
-      sizeMode: "auto", frameWidth: 420, fitPadding: 240,
+      sizeMode: "auto", frameWidth: 420, fitPadding: 240, baseColor: "#2b2927",
       shadow: { enabled: true, color: "#000000", opacity: 0.45, blur: 17, x: 2, y: 5 },
       background: { type: "solid", color1: "#ece9e3", color2: "#b8c9c4", gradientAngle: 135, pattern: "dots", size: 48, rotation: 0, randomRotation: false, jitter: 30, seed: uidSeed() }
     }
@@ -76,7 +78,7 @@
   const PROJECT_STORE_NAME = "projects";
   const PROJECT_RECORD_KEY = "active-project";
   const HISTORY_LIMIT = 40;
-  const PROJECT_VERSION = 3;
+  const PROJECT_VERSION = 10;
 
   const assetSources = new Map();
   let projectDbPromise = null;
@@ -192,6 +194,7 @@
       movie: state.movie,
       viewfinder: state.viewfinder,
       film120: state.film120,
+      textureLibrary: state.textureLibrary,
       film35: state.film35,
       ui
     };
@@ -295,25 +298,73 @@
     state.previewZoom = clamp(Number(ui.previewZoom || 1), 0.5, 3);
   }
 
+  function normalizeEffectsObject(effects) {
+    const defaults = makeEffects();
+    const source = effects || {};
+    const normalized = {
+      filter: { ...defaults.filter, ...(source.filter || {}) },
+      lightLeak: { ...defaults.lightLeak, ...(source.lightLeak || {}) },
+      overlay: { ...defaults.overlay, ...(source.overlay || {}) },
+      grain: { ...defaults.grain, ...(source.grain || {}) }
+    };
+    normalized.overlay.zoom = clamp(Number(normalized.overlay.zoom) || 1, 1, 4);
+    normalized.overlay.x = clamp(Number(normalized.overlay.x) || 0, -100, 100);
+    normalized.overlay.y = clamp(Number(normalized.overlay.y) || 0, -100, 100);
+    normalized.overlay.type = String(normalized.overlay.type || "custom");
+    if (["dust", "scratches", "paper", "burn"].includes(normalized.overlay.type)) normalized.overlay.type = "custom";
+    normalized.overlay.textureId = String(normalized.overlay.textureId || "");
+    return normalized;
+  }
+
   function normalizeProjectState(sourceVersion = PROJECT_VERSION) {
     state.previewZoom = clamp(Number(state.previewZoom || 1), 0.5, 3);
+
+    state.movie ||= {};
+    state.movie.subtitle ||= {};
+    state.movie.subtitle.bold = Boolean(state.movie.subtitle.bold);
+    const allowedSubtitleFonts = new Set(["Gulim", "Dotum", "Batang", "ChosunMyeongjo", "PretendardVariable", "custom"]);
+    if (!allowedSubtitleFonts.has(state.movie.subtitle.font)) state.movie.subtitle.font = "Gulim";
+    state.movie.subtitle.weight = clamp(Number(state.movie.subtitle.weight) || 500, 100, 900);
+    state.movie.effects = normalizeEffectsObject(state.movie.effects);
 
     state.viewfinder ||= {};
     state.viewfinder.style ||= "digital";
     state.viewfinder.orientation ||= "landscape";
     state.viewfinder.grid = state.viewfinder.grid !== false;
-    state.viewfinder.gridColor = state.viewfinder.gridColor === "black" ? "black" : "white";
+    const legacyViewfinderUiColor = state.viewfinder.uiColor || state.viewfinder.gridColor || "white";
+    state.viewfinder.gridStyle = state.viewfinder.gridStyle === "dashed" ? "dashed" : "solid";
+    state.viewfinder.guideColor = state.viewfinder.guideColor === "black" ? "black" : (legacyViewfinderUiColor === "black" ? "black" : "white");
+    state.viewfinder.textColor = state.viewfinder.textColor === "black" ? "black" : (legacyViewfinderUiColor === "black" ? "black" : "white");
+    state.viewfinder.frameColor = state.viewfinder.frameColor === "white" ? "white" : "black";
     state.viewfinder.rec = state.viewfinder.rec !== false;
+    delete state.viewfinder.uiColor;
+    state.viewfinder.effects = normalizeEffectsObject(state.viewfinder.effects);
 
     state.film120 ||= {};
     state.film120.orientation ||= "landscape";
     state.film120.cutNumber ??= "01";
     state.film120.edgeText ??= "400";
+    state.film120.effects = normalizeEffectsObject(state.film120.effects);
+
+    if (!Array.isArray(state.textureLibrary)) state.textureLibrary = [];
+    state.textureLibrary = state.textureLibrary.filter((item) => item && item.img).map((item, index) => ({
+      id: String(item.id || `texture-${index + 1}`),
+      category: String(item.category || textureCategoryFromFilename(item.sourceName || item.name || "texture")),
+      name: String(item.name || `texture${index + 1}`),
+      sourceName: String(item.sourceName || item.name || ""),
+      img: item.img
+    }));
 
     state.film35 ||= {};
     state.film35.orientation ||= "landscape";
     state.film35.perCutLightLeak = Boolean(state.film35.perCutLightLeak);
+    state.film35.baseColor = /^#[0-9a-f]{6}$/i.test(String(state.film35.baseColor || "")) ? state.film35.baseColor : "#2b2927";
     state.film35.breakEvery = clamp(Math.round(Number(state.film35.breakEvery) || 6), 1, 36);
+    state.film35.freeTransform = Boolean(state.film35.freeTransform);
+    state.film35.selectedStrip = Math.max(0, Math.round(Number(state.film35.selectedStrip) || 0));
+    state.film35.globalEffects = normalizeEffectsObject(state.film35.globalEffects);
+    if (Array.isArray(state.film35.cuts)) state.film35.cuts.forEach((cut) => { cut.effects = normalizeEffectsObject(cut.effects); });
+    if (!Array.isArray(state.film35.stripTransforms)) state.film35.stripTransforms = [];
     const legacyShadow = state.film35.shadow || {};
     state.film35.shadow = { enabled: true, color: "#000000", opacity: 0.45, blur: 17, x: 2, y: 5, ...legacyShadow };
     if (Number(sourceVersion || 0) < 3) {
@@ -343,6 +394,7 @@
       state.movie = hydrated.movie || state.movie;
       state.viewfinder = hydrated.viewfinder || state.viewfinder;
       state.film120 = hydrated.film120 || state.film120;
+      state.textureLibrary = hydrated.textureLibrary || [];
       state.film35 = hydrated.film35 || state.film35;
       normalizeProjectState(hydrated.version);
       ensureCuts();
@@ -442,11 +494,11 @@
   ];
 
   const subtitleTemplates = {
-    classic: { font: "Gulim", size: 54, weight: 500, color: "#ffffff", strokeColor: "#000000", strokeWidth: 2.4, italic: false, letterSpacing: 0, lineHeight: 1.35, anchor: "bottom-center", x: 0, y: -8 },
-    festival: { font: "PretendardVariable", size: 48, weight: 650, color: "#f8f6ef", strokeColor: "#000000", strokeWidth: 0, italic: false, letterSpacing: 1.2, lineHeight: 1.4, anchor: "bottom-left", x: 0, y: -5 },
-    noir: { font: "Batang", size: 58, weight: 400, color: "#f5f1e6", strokeColor: "#050505", strokeWidth: 1.6, italic: true, letterSpacing: 1.8, lineHeight: 1.3, anchor: "bottom-center", x: 0, y: -7 },
-    archive: { font: "ChosunMyeongjo", size: 50, weight: 400, color: "#eee8d8", strokeColor: "#111111", strokeWidth: 0.8, italic: false, letterSpacing: 0.6, lineHeight: 1.48, anchor: "top-left", x: 0, y: 2 },
-    soft: { font: "PretendardVariable", size: 52, weight: 420, color: "#f3e5c8", strokeColor: "#3b2c24", strokeWidth: 1.2, italic: false, letterSpacing: 0.2, lineHeight: 1.38, anchor: "bottom-center", x: 0, y: -9 }
+    classic: { bold: false, font: "Gulim", size: 54, weight: 500, color: "#ffffff", strokeColor: "#000000", strokeWidth: 2.4, italic: false, letterSpacing: 0, lineHeight: 1.35, anchor: "bottom-center", x: 0, y: -8 },
+    festival: { bold: true, font: "PretendardVariable", size: 48, weight: 650, color: "#f8f6ef", strokeColor: "#000000", strokeWidth: 0, italic: false, letterSpacing: 1.2, lineHeight: 1.4, anchor: "bottom-left", x: 0, y: -5 },
+    noir: { bold: false, font: "Batang", size: 58, weight: 400, color: "#f5f1e6", strokeColor: "#050505", strokeWidth: 1.6, italic: true, letterSpacing: 1.8, lineHeight: 1.3, anchor: "bottom-center", x: 0, y: -7 },
+    archive: { bold: false, font: "ChosunMyeongjo", size: 50, weight: 400, color: "#eee8d8", strokeColor: "#111111", strokeWidth: 0.8, italic: false, letterSpacing: 0.6, lineHeight: 1.48, anchor: "top-left", x: 0, y: 2 },
+    soft: { bold: false, font: "PretendardVariable", size: 52, weight: 420, color: "#f3e5c8", strokeColor: "#3b2c24", strokeWidth: 1.2, italic: false, letterSpacing: 0.2, lineHeight: 1.38, anchor: "bottom-center", x: 0, y: -9 }
   };
 
   let renderQueued = false;
@@ -479,6 +531,56 @@
     return state.film35.effectScope === "all" ? state.film35.globalEffects : state.film35.cuts[state.film35.selected].effects;
   }
 
+  function makeStripTransform(index = 0) {
+    return { x: 0, y: 0, scale: 1, rotation: 0, z: index };
+  }
+
+  function getFilm35LineCount() {
+    const count = clamp(Math.round(Number(state.film35.count) || 1), 1, 36);
+    const perLine = Math.min(clamp(Math.round(Number(state.film35.breakEvery) || 6), 1, 36), count);
+    return Math.max(1, Math.ceil(count / perLine));
+  }
+
+  function ensureStripTransforms(lineCount = getFilm35LineCount()) {
+    const f = state.film35;
+    if (!Array.isArray(f.stripTransforms)) f.stripTransforms = [];
+    while (f.stripTransforms.length < lineCount) {
+      const maxZ = f.stripTransforms.reduce((max, item) => Math.max(max, Number(item?.z) || 0), -1);
+      f.stripTransforms.push(makeStripTransform(maxZ + 1));
+    }
+    if (f.stripTransforms.length > lineCount) f.stripTransforms.length = lineCount;
+    f.stripTransforms = f.stripTransforms.map((item, index) => ({
+      x: clamp(Number(item?.x) || 0, -12000, 12000),
+      y: clamp(Number(item?.y) || 0, -12000, 12000),
+      scale: clamp(Number(item?.scale) || 1, 0.1, 5),
+      rotation: clamp(Number(item?.rotation) || 0, -180, 180),
+      z: Number.isFinite(Number(item?.z)) ? Number(item.z) : index
+    }));
+    const ordered = [...f.stripTransforms].sort((a, b) => a.z - b.z);
+    ordered.forEach((item, index) => { item.z = index; });
+    f.selectedStrip = clamp(Math.round(Number(f.selectedStrip) || 0), 0, Math.max(0, lineCount - 1));
+    return f.stripTransforms;
+  }
+
+  function getSelectedStripTransform() {
+    ensureStripTransforms();
+    return state.film35.stripTransforms[state.film35.selectedStrip] || state.film35.stripTransforms[0];
+  }
+
+  function moveSelectedStripLayer(direction) {
+    const transforms = ensureStripTransforms();
+    const selected = transforms[state.film35.selectedStrip];
+    if (!selected) return;
+    const ordered = transforms.map((item, index) => ({ item, index })).sort((a, b) => a.item.z - b.item.z);
+    const current = ordered.findIndex((entry) => entry.index === state.film35.selectedStrip);
+    const target = clamp(current + direction, 0, ordered.length - 1);
+    if (target === current) return;
+    const other = ordered[target].item;
+    const z = selected.z;
+    selected.z = other.z;
+    other.z = z;
+  }
+
   function ensureCuts() {
     const target = clamp(Math.round(Number(state.film35.count) || 1), 1, 36);
     state.film35.count = target;
@@ -487,6 +589,7 @@
     if (state.film35.cuts.length > target) state.film35.cuts.length = target;
     state.film35.selected = clamp(Math.round(Number(state.film35.selected) || 0), 0, target - 1);
     state.film35.breakEvery = clamp(Math.round(Number(state.film35.breakEvery) || 6), 1, 36);
+    ensureStripTransforms();
   }
 
   function resetImageTransform(image) {
@@ -792,66 +895,34 @@
     leak.color = palette[Math.floor(random() * palette.length)];
   }
 
-  function drawProceduralOverlay(overlayCtx, width, height, overlay) {
-    const random = mulberry32(overlay.seed);
-    const countScale = Math.sqrt(width * height) / 900;
+  function getTextureEntry(type) {
+    if (!String(type || "").startsWith("texture:")) return null;
+    const id = String(type).slice("texture:".length);
+    return state.textureLibrary.find((item) => item.id === id) || null;
+  }
+
+  function getOverlayImage(overlay) {
+    if (!overlay) return null;
+    if (overlay.type === "custom") return overlay.customImage || null;
+    return getTextureEntry(overlay.type)?.img || null;
+  }
+
+  function drawOverlayCover(overlayCtx, width, height, overlay) {
+    const img = getOverlayImage(overlay);
+    if (!img?.naturalWidth || !img?.naturalHeight) return false;
+    const baseScale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+    const zoom = clamp(Number(overlay.zoom) || 1, 1, 4);
+    const drawWidth = img.naturalWidth * baseScale * zoom;
+    const drawHeight = img.naturalHeight * baseScale * zoom;
+    const maxPanX = Math.max(0, (drawWidth - width) / 2);
+    const maxPanY = Math.max(0, (drawHeight - height) / 2);
+    const panX = clamp(Number(overlay.x) || 0, -100, 100) / 100 * maxPanX;
+    const panY = clamp(Number(overlay.y) || 0, -100, 100) / 100 * maxPanY;
     overlayCtx.clearRect(0, 0, width, height);
-    if (overlay.type === "custom" && overlay.customImage) {
-      const img = overlay.customImage;
-      overlayCtx.imageSmoothingEnabled = true;
-      overlayCtx.imageSmoothingQuality = "high";
-      overlayCtx.drawImage(img, 0, 0, width, height);
-      return;
-    }
-    if (overlay.type === "dust") {
-      overlayCtx.fillStyle = "#f1eee4";
-      const count = Math.round(160 * countScale);
-      for (let i = 0; i < count; i++) {
-        const radius = 0.5 + Math.pow(random(), 2.4) * Math.max(2, width * 0.007);
-        overlayCtx.globalAlpha = 0.08 + random() * 0.55;
-        overlayCtx.beginPath();
-        overlayCtx.arc(random() * width, random() * height, radius, 0, Math.PI * 2);
-        overlayCtx.fill();
-      }
-      overlayCtx.globalAlpha = 1;
-    } else if (overlay.type === "scratches") {
-      const count = Math.round(22 * countScale);
-      for (let i = 0; i < count; i++) {
-        const x = random() * width;
-        const y = random() * height;
-        overlayCtx.strokeStyle = random() > 0.35 ? "rgba(255,248,232,.55)" : "rgba(20,18,17,.55)";
-        overlayCtx.lineWidth = 0.4 + random() * 1.6;
-        overlayCtx.beginPath();
-        overlayCtx.moveTo(x, y);
-        overlayCtx.lineTo(x + (random() - 0.5) * width * 0.04, y + height * (0.08 + random() * 0.68));
-        overlayCtx.stroke();
-      }
-    } else if (overlay.type === "paper") {
-      overlayCtx.fillStyle = "#a88761";
-      overlayCtx.fillRect(0, 0, width, height);
-      const count = Math.round(3500 * countScale);
-      for (let i = 0; i < count; i++) {
-        const v = Math.floor(80 + random() * 170);
-        overlayCtx.fillStyle = `rgba(${v},${Math.max(0, v - 18)},${Math.max(0, v - 35)},${0.03 + random() * 0.09})`;
-        const size = 0.5 + random() * 2.5;
-        overlayCtx.fillRect(random() * width, random() * height, size, size);
-      }
-    } else if (overlay.type === "burn") {
-      overlayCtx.globalCompositeOperation = "screen";
-      for (let i = 0; i < 4; i++) {
-        const x = random() > 0.5 ? random() * width * 0.15 : width * (0.85 + random() * 0.15);
-        const y = random() * height;
-        const radius = Math.max(width, height) * (0.18 + random() * 0.55);
-        const gradient = overlayCtx.createRadialGradient(x, y, 0, x, y, radius);
-        gradient.addColorStop(0, "rgba(255,245,205,.92)");
-        gradient.addColorStop(0.2, "rgba(255,137,55,.7)");
-        gradient.addColorStop(0.55, "rgba(205,44,32,.3)");
-        gradient.addColorStop(1, "rgba(0,0,0,0)");
-        overlayCtx.fillStyle = gradient;
-        overlayCtx.fillRect(0, 0, width, height);
-      }
-      overlayCtx.globalCompositeOperation = "source-over";
-    }
+    overlayCtx.imageSmoothingEnabled = true;
+    overlayCtx.imageSmoothingQuality = "high";
+    overlayCtx.drawImage(img, (width - drawWidth) / 2 + panX, (height - drawHeight) / 2 + panY, drawWidth, drawHeight);
+    return true;
   }
 
   function applyOverlayToCanvas(baseCanvas, overlay, rectPx = null) {
@@ -863,8 +934,8 @@
     const overlayCanvas = document.createElement("canvas");
     overlayCanvas.width = width;
     overlayCanvas.height = height;
-    const overlayCtx = overlayCanvas.getContext("2d");
-    drawProceduralOverlay(overlayCtx, width, height, overlay);
+    const overlayCtx = overlayCanvas.getContext("2d", { willReadFrequently: true });
+    if (!drawOverlayCover(overlayCtx, width, height, overlay)) return;
     const baseCtx = baseCanvas.getContext("2d", { willReadFrequently: true });
     if (overlay.blend === "divide") {
       const baseData = baseCtx.getImageData(x, y, width, height);
@@ -886,6 +957,130 @@
     baseCtx.globalCompositeOperation = overlay.blend;
     baseCtx.drawImage(overlayCanvas, x, y);
     baseCtx.restore();
+  }
+
+  function textureCategoryFromFilename(filename) {
+    const base = String(filename || "").split(/[\\/]/).pop().replace(/\.[^.]+$/, "").toLowerCase();
+    const categories = [
+      ["snow", ["snow", "눈"]], ["rain", ["rain", "비", "raindrop"]], ["bokeh", ["bokeh", "보케"]],
+      ["scratch", ["scratch", "scrape", "흠집", "스크래치"]], ["dust", ["dust", "먼지", "dirt"]],
+      ["grain", ["grain", "noise", "노이즈", "입자"]], ["lightleak", ["lightleak", "light-leak", "leak", "빛샘"]],
+      ["flare", ["flare", "glow", "플레어", "번짐"]], ["fog", ["fog", "mist", "안개"]],
+      ["smoke", ["smoke", "연기"]], ["paper", ["paper", "종이"]], ["sparkle", ["sparkle", "star", "반짝"]],
+      ["water", ["water", "물", "droplet"]], ["cloud", ["cloud", "구름"]]
+    ];
+    for (const [category, words] of categories) if (words.some((word) => base.includes(word))) return category;
+    const cleaned = base.replace(/\d+/g, " ").replace(/[^a-z가-힣]+/g, " ").trim().split(/\s+/)[0];
+    return cleaned || "texture";
+  }
+
+  function decodeZipFilename(bytes, utf8) {
+    try {
+      const label = utf8 ? "utf-8" : "euc-kr";
+      return new TextDecoder(label).decode(bytes);
+    } catch (_) {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+  }
+
+  async function inflateZipEntry(data, method) {
+    if (method === 0) return data;
+    if (method !== 8) throw new Error(`지원하지 않는 ZIP 압축 방식입니다. (${method})`);
+    if (typeof DecompressionStream !== "function") throw new Error("이 브라우저는 ZIP 압축 해제를 지원하지 않습니다.");
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function mimeForTexture(filename) {
+    const ext = String(filename).split(".").pop().toLowerCase();
+    return ({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", avif: "image/avif" })[ext] || "application/octet-stream";
+  }
+
+  async function extractTextureZip(file) {
+    const buffer = await file.arrayBuffer();
+    const view = new DataView(buffer);
+    let eocd = -1;
+    const minOffset = Math.max(0, buffer.byteLength - 0xffff - 22);
+    for (let offset = buffer.byteLength - 22; offset >= minOffset; offset--) {
+      if (view.getUint32(offset, true) === 0x06054b50) { eocd = offset; break; }
+    }
+    if (eocd < 0) throw new Error("올바른 ZIP 파일이 아닙니다.");
+    const entryCount = view.getUint16(eocd + 10, true);
+    let offset = view.getUint32(eocd + 16, true);
+    const rawEntries = [];
+    for (let index = 0; index < entryCount; index++) {
+      if (view.getUint32(offset, true) !== 0x02014b50) break;
+      const flags = view.getUint16(offset + 8, true);
+      const method = view.getUint16(offset + 10, true);
+      const compressedSize = view.getUint32(offset + 20, true);
+      const nameLength = view.getUint16(offset + 28, true);
+      const extraLength = view.getUint16(offset + 30, true);
+      const commentLength = view.getUint16(offset + 32, true);
+      const localOffset = view.getUint32(offset + 42, true);
+      const filename = decodeZipFilename(new Uint8Array(buffer, offset + 46, nameLength), Boolean(flags & 0x0800));
+      offset += 46 + nameLength + extraLength + commentLength;
+      if (/\/$/.test(filename) || /(^|\/)__MACOSX\//.test(filename) || !/\.(png|jpe?g|webp|gif|avif)$/i.test(filename)) continue;
+      if (flags & 1) throw new Error("암호화된 ZIP 파일은 사용할 수 없습니다.");
+      if (view.getUint32(localOffset, true) !== 0x04034b50) continue;
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = new Uint8Array(buffer, dataStart, compressedSize);
+      rawEntries.push({ filename, method, compressed });
+    }
+    if (!rawEntries.length) throw new Error("ZIP 안에서 PNG/JPG/WebP 이미지 파일을 찾지 못했습니다.");
+
+    rawEntries.sort((a, b) => a.filename.localeCompare(b.filename, "ko", { numeric: true }));
+    const counters = new Map();
+    const result = [];
+    for (const entry of rawEntries) {
+      const bytes = await inflateZipEntry(entry.compressed, entry.method);
+      const blob = new Blob([bytes], { type: mimeForTexture(entry.filename) });
+      const source = await readFileAsDataURL(blob);
+      const assetId = makeAssetId("texture");
+      assetSources.set(assetId, source);
+      const img = await createImageFromSource(source, assetId);
+      const category = textureCategoryFromFilename(entry.filename);
+      const number = (counters.get(category) || 0) + 1;
+      counters.set(category, number);
+      result.push({ id: assetId, category, name: `${category}${number}`, sourceName: entry.filename, img });
+    }
+    return result;
+  }
+
+  function syncTextureLibraryUI() {
+    const select = $("overlayType");
+    if (!select) return;
+    const overlay = getActiveEffects().overlay;
+    const current = overlay.type || "custom";
+    select.textContent = "";
+    const customOption = document.createElement("option");
+    customOption.value = "custom";
+    customOption.textContent = "사용자 이미지";
+    select.appendChild(customOption);
+    const groups = new Map();
+    state.textureLibrary.forEach((item) => {
+      const category = item.category || textureCategoryFromFilename(item.name);
+      if (!groups.has(category)) groups.set(category, []);
+      groups.get(category).push(item);
+    });
+    [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, "ko")).forEach(([category, items]) => {
+      const group = document.createElement("optgroup");
+      group.label = category;
+      items.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = `texture:${item.id}`;
+        option.textContent = item.name;
+        option.title = item.sourceName || item.name;
+        group.appendChild(option);
+      });
+      select.appendChild(group);
+    });
+    const valid = current === "custom" || Boolean(getTextureEntry(current));
+    overlay.type = valid ? current : (state.textureLibrary[0] ? `texture:${state.textureLibrary[0].id}` : "custom");
+    select.value = overlay.type;
+    const status = $("textureLibraryStatus");
+    if (status) status.textContent = state.textureLibrary.length ? `${state.textureLibrary.length}개 텍스처` : "텍스처 ZIP을 불러오세요";
   }
 
   const grainCache = new Map();
@@ -1016,12 +1211,59 @@
     const localWidth = portrait ? width : height;
     const localHeight = portrait ? height : width;
     const frameRotation = portrait ? 0 : 90;
-    const margin = Math.min(localWidth, localHeight) * 0.065;
+    const margin = Math.min(localWidth, localHeight) * 0.038;
     const photoRectLocal = { x: margin, y: margin, w: localWidth - margin * 2, h: localHeight - margin * 2 };
     const photoRect = frameRotation === 90 ? rotateRectClockwise(photoRectLocal, localWidth, localHeight) : { ...photoRectLocal };
     return {
       width: Math.round(width), height: Math.round(height), localWidth, localHeight, frameRotation, photoRectLocal, photoRect
     };
+  }
+
+  function transformStripPoint(point, rect, transform) {
+    const scale = clamp(Number(transform?.scale) || 1, 0.1, 5);
+    const angle = deg(Number(transform?.rotation) || 0);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    const dx = (point.x - cx) * scale;
+    const dy = (point.y - cy) * scale;
+    return {
+      x: cx + (Number(transform?.x) || 0) + dx * cos - dy * sin,
+      y: cy + (Number(transform?.y) || 0) + dx * sin + dy * cos
+    };
+  }
+
+  function inverseStripVector(dx, dy, transform) {
+    const scale = clamp(Number(transform?.scale) || 1, 0.1, 5);
+    const angle = -deg(Number(transform?.rotation) || 0);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return { x: (dx * cos - dy * sin) / scale, y: (dx * sin + dy * cos) / scale };
+  }
+
+  function rectCorners(rect) {
+    return [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h }
+    ];
+  }
+
+  function boundsFromPoints(points) {
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const maxX = Math.max(...xs);
+    const maxY = Math.max(...ys);
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
+  function transformedRectGeometry(rect, transform) {
+    const quad = rectCorners(rect).map((point) => transformStripPoint(point, rect, transform));
+    return { quad, bounds: boundsFromPoints(quad) };
   }
 
   function getFilm35Layout() {
@@ -1030,6 +1272,7 @@
     const portrait = f.orientation === "portrait";
     const perLine = Math.min(clamp(f.breakEvery, 1, 36), f.count);
     const lines = Math.ceil(f.count / perLine);
+    const transforms = ensureStripTransforms(lines);
     let canvasWidth = f.canvasWidth;
     let canvasHeight = f.canvasHeight;
     let canonicalFrameWidth;
@@ -1070,26 +1313,51 @@
 
     const crossStart = f.fitCanvas ? padding : ((portrait ? canvasWidth : canvasHeight) - totalCross) / 2;
     const positions = [];
+    const strips = [];
     for (let line = 0; line < lines; line++) {
       const count = Math.min(perLine, f.count - line * perLine);
       const axisCanvasLength = portrait ? canvasHeight : canvasWidth;
       const axisStart = f.fitCanvas
         ? padding + lineOffsets[line] - minOffset
         : (axisCanvasLength - lineLengths[line]) / 2 + lineOffsets[line];
+      const stripRect = portrait
+        ? { x: crossStart + line * (frameWidth + f.rowGap), y: axisStart, w: frameWidth, h: lineLengths[line] }
+        : { x: axisStart, y: crossStart + line * (frameHeight + f.rowGap), w: lineLengths[line], h: frameHeight };
+      const strip = { line, rect: stripRect, transform: transforms[line], positions: [] };
       for (let item = 0; item < count; item++) {
         const index = line * perLine + item;
-        if (portrait) {
-          positions.push({ index, x: crossStart + line * (frameWidth + f.rowGap), y: axisStart + item * (frameHeight - 1), w: frameWidth, h: frameHeight, row: item, col: line });
-        } else {
-          positions.push({ index, x: axisStart + item * (frameWidth - 1), y: crossStart + line * (frameHeight + f.rowGap), w: frameWidth, h: frameHeight, row: line, col: item });
-        }
+        const position = portrait
+          ? { index, x: stripRect.x, y: stripRect.y + item * (frameHeight - 1), w: frameWidth, h: frameHeight, row: item, col: line, line }
+          : { index, x: stripRect.x + item * (frameWidth - 1), y: stripRect.y, w: frameWidth, h: frameHeight, row: line, col: item, line };
+        positions.push(position);
+        strip.positions.push(position);
       }
+      strips.push(strip);
     }
+
+    if (f.fitCanvas && strips.length) {
+      const transformedBounds = strips.map((strip) => transformedRectGeometry(strip.rect, strip.transform).bounds);
+      const unionMinX = Math.min(...transformedBounds.map((rect) => rect.x));
+      const unionMinY = Math.min(...transformedBounds.map((rect) => rect.y));
+      const unionMaxX = Math.max(...transformedBounds.map((rect) => rect.x + rect.w));
+      const unionMaxY = Math.max(...transformedBounds.map((rect) => rect.y + rect.h));
+      const shiftX = padding - unionMinX;
+      const shiftY = padding - unionMinY;
+      strips.forEach((strip) => {
+        strip.rect.x += shiftX;
+        strip.rect.y += shiftY;
+        strip.positions.forEach((position) => { position.x += shiftX; position.y += shiftY; });
+      });
+      canvasWidth = unionMaxX - unionMinX + padding * 2;
+      canvasHeight = unionMaxY - unionMinY + padding * 2;
+    }
+
+    strips.forEach((strip) => Object.assign(strip, transformedRectGeometry(strip.rect, strip.transform)));
     const canonicalPhotoRect = { x: canonicalFrameWidth * 0.065, y: canonicalFrameHeight * 0.138, w: canonicalFrameWidth * 0.87, h: canonicalFrameHeight * 0.69 };
     return {
       width: Math.max(1, Math.round(canvasWidth)), height: Math.max(1, Math.round(canvasHeight)),
       frameWidth, frameHeight, canonicalFrameWidth, canonicalFrameHeight, canonicalPhotoRect,
-      frameRotation: portrait ? 90 : 0, rows: lines, positions, transparentFit: f.fitCanvas && lines === 1
+      frameRotation: portrait ? 90 : 0, rows: lines, positions, strips, transparentFit: f.fitCanvas && lines === 1
     };
   }
 
@@ -1100,6 +1368,18 @@
     return getFilm35Layout();
   }
 
+  function subtitleFontFamily(font, customFontLoaded = false) {
+    const families = {
+      Gulim: '"Gulim", "굴림", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+      Dotum: '"Dotum", "돋움", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+      Batang: '"Batang", "바탕", "NanumMyeongjo", "Noto Serif KR", serif',
+      ChosunMyeongjo: '"ChosunMyeongjo", "Batang", "바탕", serif',
+      PretendardVariable: '"PretendardVariable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif'
+    };
+    if (font === "custom") return customFontLoaded ? '"UserFont", sans-serif' : families.PretendardVariable;
+    return families[font] || families.Gulim;
+  }
+
   function drawSubtitle(targetCtx, width, height) {
     const s = state.movie.subtitle;
     if (!s.enabled || !s.text.trim()) return;
@@ -1107,9 +1387,14 @@
     const horizontal = s.anchor.endsWith("left") ? "left" : s.anchor.endsWith("right") ? "right" : "center";
     const vertical = s.anchor.startsWith("top") ? "top" : s.anchor.startsWith("middle") ? "middle" : "bottom";
     let fontSize = s.size;
-    const fontName = s.font === "custom" && s.customFontLoaded ? "UserFont" : s.font === "custom" ? "PretendardVariable" : s.font;
+    const fontFamily = subtitleFontFamily(s.font, s.customFontLoaded);
     const fontStyle = s.italic ? "italic" : "normal";
-    const setFont = () => { targetCtx.font = `${fontStyle} ${s.weight} ${fontSize}px "${fontName}", sans-serif`; };
+    const effectiveWeight = s.font === "PretendardVariable" ? (s.bold ? Math.max(700, Number(s.weight) || 500) : Number(s.weight) || 500) : (s.bold ? 700 : 400);
+    const setFont = () => {
+      // Canvas may keep a previous variable-font fallback when the next family is unavailable.
+      // Resetting once and supplying Korean family aliases makes every dropdown change deterministic.
+      targetCtx.font = `${fontStyle} ${effectiveWeight} ${fontSize}px ${fontFamily}`;
+    };
     setFont();
     if (s.autoSize) {
       const maxWidth = width * 0.86;
@@ -1178,13 +1463,20 @@
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
 
+  function viewfinderTone(kind = "text", alpha = 1) {
+    const v = state.viewfinder;
+    const choice = kind === "frame" ? v.frameColor : kind === "guide" ? v.guideColor : v.textColor;
+    const channel = choice === "black" ? "0,0,0" : "255,255,255";
+    return `rgba(${channel},${clamp(alpha, 0, 1)})`;
+  }
+
   function drawRuleOfThirds(targetCtx, rect, unit) {
     const v = state.viewfinder;
     if (!v.grid) return;
     targetCtx.save();
-    targetCtx.strokeStyle = v.gridColor === "black" ? "rgba(0,0,0,.58)" : "rgba(255,255,255,.58)";
+    targetCtx.strokeStyle = viewfinderTone("guide", 0.68);
     targetCtx.lineWidth = Math.max(1, unit * 0.0016);
-    targetCtx.setLineDash([unit * 0.008, unit * 0.006]);
+    targetCtx.setLineDash(v.gridStyle === "dashed" ? [unit * 0.008, unit * 0.006] : []);
     [1 / 3, 2 / 3].forEach((t) => {
       targetCtx.beginPath();
       targetCtx.moveTo(rect.x + rect.w * t, rect.y);
@@ -1202,18 +1494,23 @@
     const v = state.viewfinder;
     const unit = Math.min(width, height);
     const outer = unit * 0.025;
+    const textStrong = viewfinderTone("text", 0.94);
+    const guideSoft = viewfinderTone("guide", 0.72);
+    const frameStrong = viewfinderTone("frame", 0.96);
+    const frameSoft = viewfinderTone("frame", 0.2);
     targetCtx.save();
-    targetCtx.strokeStyle = "rgba(23,21,22,.96)";
+
+    targetCtx.strokeStyle = frameStrong;
     targetCtx.lineWidth = outer;
     targetCtx.strokeRect(outer / 2, outer / 2, width - outer, height - outer);
-    targetCtx.strokeStyle = "rgba(255,255,255,.14)";
+    targetCtx.strokeStyle = frameSoft;
     targetCtx.lineWidth = Math.max(1, unit * 0.0014);
     targetCtx.strokeRect(outer, outer, width - outer * 2, height - outer * 2);
 
-    const inset = unit * 0.048;
-    const corner = unit * 0.145;
-    targetCtx.strokeStyle = "rgba(24,22,23,.94)";
-    targetCtx.lineWidth = unit * 0.0055;
+    const inset = unit * 0.052;
+    const corner = unit * 0.13;
+    targetCtx.strokeStyle = frameStrong;
+    targetCtx.lineWidth = unit * 0.0052;
     [[inset, inset, 1, 1], [width - inset, inset, -1, 1], [inset, height - inset, 1, -1], [width - inset, height - inset, -1, -1]].forEach(([x, y, sx, sy]) => {
       targetCtx.beginPath();
       targetCtx.moveTo(x, y + sy * corner);
@@ -1224,7 +1521,7 @@
 
     drawRuleOfThirds(targetCtx, { x: outer, y: outer, w: width - outer * 2, h: height - outer * 2 }, unit);
 
-    targetCtx.strokeStyle = "rgba(255,255,255,.76)";
+    targetCtx.strokeStyle = guideSoft;
     targetCtx.lineWidth = Math.max(1, unit * 0.0022);
     const focusW = unit * 0.12;
     const focusH = unit * 0.082;
@@ -1234,38 +1531,38 @@
     [[focusX, focusY, 1, 1], [focusX + focusW, focusY, -1, 1], [focusX, focusY + focusH, 1, -1], [focusX + focusW, focusY + focusH, -1, -1]].forEach(([x, y, sx, sy]) => {
       targetCtx.beginPath(); targetCtx.moveTo(x + sx * tick, y); targetCtx.lineTo(x, y); targetCtx.lineTo(x, y + sy * tick); targetCtx.stroke();
     });
-    targetCtx.fillStyle = "rgba(255,255,255,.84)";
+    targetCtx.fillStyle = textStrong;
     targetCtx.beginPath(); targetCtx.arc(width / 2, height / 2, unit * 0.004, 0, Math.PI * 2); targetCtx.fill();
 
     targetCtx.font = `650 ${unit * 0.018}px PretendardVariable`;
     targetCtx.textBaseline = "middle";
-    targetCtx.fillStyle = "rgba(255,255,255,.88)";
+    targetCtx.fillStyle = textStrong;
     targetCtx.textAlign = "left";
-    targetCtx.fillText("AF-C   25P", width * 0.055, height * 0.052);
+    targetCtx.fillText("AF-C   25P", width * 0.225, height * 0.082);
     targetCtx.textAlign = "right";
-    targetCtx.fillText("F2.8   +0.3", width * 0.945, height * 0.052);
+    targetCtx.fillText("F2.8   +0.3", width * 0.775, height * 0.082);
     targetCtx.textAlign = "left";
-    targetCtx.fillText("1/125", width * 0.055, height * 0.94);
+    targetCtx.fillText("1/125", width * 0.18, height * 0.925);
     targetCtx.textAlign = "center";
-    targetCtx.fillText("ISO 400", width * 0.5, height * 0.94);
+    targetCtx.fillText("ISO 400", width * 0.5, height * 0.925);
     targetCtx.textAlign = "right";
-    targetCtx.fillText("AWB", width * 0.945, height * 0.94);
+    targetCtx.fillText("AWB", width * 0.82, height * 0.925);
 
     if (v.rec) {
-      const recY = height * 0.105;
+      const recY = height * 0.12;
+      const recDotX = width * 0.09;
       targetCtx.fillStyle = "#ff2636";
-      targetCtx.beginPath(); targetCtx.arc(width * 0.085, recY, unit * 0.015, 0, Math.PI * 2); targetCtx.fill();
-      targetCtx.fillStyle = "rgba(255,255,255,.96)";
-      roundRect(targetCtx, width * 0.108, recY - unit * 0.021, unit * 0.078, unit * 0.042, unit * 0.006); targetCtx.fill();
-      targetCtx.fillStyle = "#131313";
+      targetCtx.beginPath(); targetCtx.arc(recDotX, recY, unit * 0.015, 0, Math.PI * 2); targetCtx.fill();
+      targetCtx.fillStyle = textStrong;
       targetCtx.font = `750 ${unit * 0.026}px PretendardVariable`;
-      targetCtx.textAlign = "center"; targetCtx.textBaseline = "middle";
-      targetCtx.fillText("REC", width * 0.147, recY);
-      drawBattery(targetCtx, width * 0.84, recY - unit * 0.018, unit * 0.095, unit * 0.036);
-      targetCtx.fillStyle = "rgba(25,22,23,.93)";
-      roundRect(targetCtx, width * 0.82, height * 0.855, unit * 0.116, unit * 0.047, unit * 0.008); targetCtx.fill();
-      targetCtx.fillStyle = "#fff"; targetCtx.font = `750 ${unit * 0.026}px PretendardVariable`;
-      targetCtx.fillText("4K", width * 0.855, height * 0.879);
+      targetCtx.textAlign = "left";
+      targetCtx.textBaseline = "middle";
+      targetCtx.fillText("REC", recDotX + unit * 0.034, recY);
+      drawBattery(targetCtx, width * 0.82, recY - unit * 0.018, unit * 0.095, unit * 0.036, textStrong);
+      targetCtx.fillStyle = textStrong;
+      targetCtx.font = `750 ${unit * 0.024}px PretendardVariable`;
+      targetCtx.textAlign = "right";
+      targetCtx.fillText("4K", width * 0.91, height * 0.875);
     }
     targetCtx.restore();
   }
@@ -1304,7 +1601,7 @@
     targetCtx.restore();
 
     targetCtx.save();
-    targetCtx.strokeStyle = rgba(edgeColor, 0.55);
+    targetCtx.strokeStyle = viewfinderTone("frame", 0.78);
     targetCtx.lineWidth = unit * 0.012;
     targetCtx.shadowColor = rgba(edgeColor, 0.58);
     targetCtx.shadowBlur = unit * 0.055;
@@ -1312,8 +1609,8 @@
     targetCtx.stroke();
     targetCtx.shadowColor = "rgba(0,0,0,.95)";
     targetCtx.shadowBlur = unit * 0.075;
-    targetCtx.strokeStyle = "rgba(5,5,6,.72)";
-    targetCtx.lineWidth = unit * 0.035;
+    targetCtx.strokeStyle = viewfinderTone("frame", 0.72);
+    targetCtx.lineWidth = unit * 0.032;
     roundRect(targetCtx, photoRect.x, photoRect.y, photoRect.w, photoRect.h, radius);
     targetCtx.stroke();
     targetCtx.restore();
@@ -1321,7 +1618,7 @@
     drawRuleOfThirds(targetCtx, photoRect, unit);
 
     targetCtx.save();
-    targetCtx.fillStyle = "rgba(242,205,124,.92)";
+    targetCtx.fillStyle = viewfinderTone("text", 0.92);
     targetCtx.font = `650 ${unit * 0.019}px PretendardVariable`;
     targetCtx.textBaseline = "middle";
     targetCtx.textAlign = "left";
@@ -1330,7 +1627,7 @@
     targetCtx.fillText("1/125", width / 2, photoRect.y + photoRect.h - unit * 0.035);
     targetCtx.textAlign = "right";
     targetCtx.fillText("f/2.8", photoRect.x + photoRect.w - unit * 0.045, photoRect.y + photoRect.h - unit * 0.035);
-    targetCtx.strokeStyle = "rgba(242,205,124,.68)";
+    targetCtx.strokeStyle = viewfinderTone("guide", 0.68);
     targetCtx.lineWidth = Math.max(1, unit * 0.0014);
     const meterY = photoRect.y + photoRect.h - unit * 0.068;
     targetCtx.beginPath(); targetCtx.moveTo(width * 0.42, meterY); targetCtx.lineTo(width * 0.58, meterY); targetCtx.stroke();
@@ -1346,12 +1643,12 @@
     else drawDigitalViewfinderFrame(targetCtx, width, height, photoRect);
   }
 
-  function drawBattery(targetCtx, x, y, w, h) {
+  function drawBattery(targetCtx, x, y, w, h, color = "rgba(24,21,22,.94)") {
     targetCtx.save();
-    targetCtx.strokeStyle = "rgba(24,21,22,.94)";
+    targetCtx.strokeStyle = color;
     targetCtx.lineWidth = Math.max(2, h * 0.12);
     roundRect(targetCtx, x, y, w, h, h * 0.16); targetCtx.stroke();
-    targetCtx.fillStyle = "rgba(24,21,22,.94)";
+    targetCtx.fillStyle = color;
     targetCtx.fillRect(x - h * 0.16, y + h * 0.25, h * 0.14, h * 0.5);
     const gap = w * 0.06;
     for (let i = 0; i < 3; i++) targetCtx.fillRect(x + gap + i * (w - gap * 2) / 3, y + gap, (w - gap * 3) / 3, h - gap * 2);
@@ -1395,10 +1692,10 @@
   }
 
   function drawVerticalFilmMark(targetCtx, x, y, text, side, unit) {
-    const triangleX = side === "left" ? x + unit * 0.018 : x - unit * 0.018;
-    drawTriangle(targetCtx, triangleX, y - unit * 0.047, unit * 0.019, "down");
+    const triangleX = side === "left" ? x + unit * 0.028 : x - unit * 0.028;
+    drawTriangle(targetCtx, triangleX, y, unit * 0.0228, "down");
     targetCtx.save();
-    targetCtx.translate(x, y + unit * 0.012);
+    targetCtx.translate(x, y);
     targetCtx.rotate(side === "left" ? -Math.PI / 2 : Math.PI / 2);
     targetCtx.fillText(String(text || ""), 0, 0);
     targetCtx.restore();
@@ -1459,7 +1756,7 @@
     const cutCanvas = createSizedCanvas(width, height, renderScale);
     const cutCtx = cutCanvas.getContext("2d", { willReadFrequently: true });
     cutCtx.scale(renderScale, renderScale);
-    const frameColor = "#2b2927";
+    const frameColor = state.film35.baseColor;
     const markerColor = "#e9c693";
     cutCtx.fillStyle = frameColor;
     cutCtx.fillRect(0, 0, width, height);
@@ -1670,44 +1967,129 @@
     return [{ index: 0, rect: layout.photoRect, localRect: layout.photoRectLocal, rotation: layout.frameRotation, image: f.image }];
   }
 
+  function drawFilm35TransformOutline(targetCtx, strip, layout) {
+    const transform = strip.transform;
+    const handleSize = Math.max(14, Math.min(layout.width, layout.height) * 0.012);
+    const lineWidth = Math.max(2, handleSize * 0.12);
+    const corners = strip.quad;
+    const topMidLocal = { x: strip.rect.x + strip.rect.w / 2, y: strip.rect.y };
+    const rotateLocal = { x: topMidLocal.x, y: strip.rect.y - handleSize * 3 / transform.scale };
+    const topMid = transformStripPoint(topMidLocal, strip.rect, transform);
+    const rotate = transformStripPoint(rotateLocal, strip.rect, transform);
+
+    targetCtx.save();
+    targetCtx.strokeStyle = "#59d4bd";
+    targetCtx.fillStyle = "#0c1512";
+    targetCtx.lineWidth = lineWidth;
+    targetCtx.setLineDash([handleSize * 0.65, handleSize * 0.42]);
+    targetCtx.beginPath();
+    targetCtx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < corners.length; i++) targetCtx.lineTo(corners[i].x, corners[i].y);
+    targetCtx.closePath();
+    targetCtx.stroke();
+    targetCtx.setLineDash([]);
+    targetCtx.beginPath();
+    targetCtx.moveTo(topMid.x, topMid.y);
+    targetCtx.lineTo(rotate.x, rotate.y);
+    targetCtx.stroke();
+    corners.forEach((point) => {
+      targetCtx.fillRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
+      targetCtx.strokeRect(point.x - handleSize / 2, point.y - handleSize / 2, handleSize, handleSize);
+    });
+    targetCtx.beginPath();
+    targetCtx.arc(rotate.x, rotate.y, handleSize * 0.62, 0, Math.PI * 2);
+    targetCtx.fill();
+    targetCtx.stroke();
+    targetCtx.restore();
+    return { corners, rotate, radius: handleSize * 0.95, center: { x: strip.rect.x + strip.rect.w / 2 + transform.x, y: strip.rect.y + strip.rect.h / 2 + transform.y } };
+  }
+
   function drawFilm35(targetCanvas, layout, renderScale, exportMode) {
     const targetCtx = targetCanvas.getContext("2d", { willReadFrequently: true });
     targetCtx.scale(renderScale, renderScale);
     drawBackground(targetCtx, layout);
     const hitMap = [];
     const f = state.film35;
-    layout.positions.forEach((position) => {
-      const cut = f.cuts[position.index];
-      const effects = f.effectScope === "all" ? f.globalEffects : cut.effects;
-      const rendered = drawFilm35Cut(
-        cut,
-        effects,
-        position.index,
-        layout.canonicalFrameWidth,
-        layout.canonicalFrameHeight,
-        renderScale,
-        position.index === f.selected,
-        exportMode,
-        layout.frameRotation
-      );
+    const orderedStrips = [...layout.strips].sort((a, b) => a.transform.z - b.transform.z);
+
+    orderedStrips.forEach((strip) => {
+      const renderedCuts = [];
+      const t = strip.transform;
+      const cx = strip.rect.x + strip.rect.w / 2;
+      const cy = strip.rect.y + strip.rect.h / 2;
       targetCtx.save();
+      targetCtx.translate(cx + t.x, cy + t.y);
+      targetCtx.rotate(deg(t.rotation));
+      targetCtx.scale(t.scale, t.scale);
       if (f.shadow.enabled && !layout.transparentFit) {
         targetCtx.shadowColor = rgba(f.shadow.color, f.shadow.opacity);
         targetCtx.shadowBlur = f.shadow.blur;
         targetCtx.shadowOffsetX = f.shadow.x;
         targetCtx.shadowOffsetY = f.shadow.y;
       }
-      targetCtx.drawImage(rendered.canvas, position.x, position.y, position.w, position.h);
-      targetCtx.restore();
-      hitMap.push({
-        index: position.index,
-        rect: { x: position.x + rendered.photoRect.x, y: position.y + rendered.photoRect.y, w: rendered.photoRect.w, h: rendered.photoRect.h },
-        localRect: rendered.localPhotoRect,
-        rotation: rendered.rotation,
-        frameRect: position,
-        image: cut.image
+      strip.positions.forEach((position) => {
+        const cut = f.cuts[position.index];
+        const effects = f.effectScope === "all" ? f.globalEffects : cut.effects;
+        const rendered = drawFilm35Cut(
+          cut,
+          effects,
+          position.index,
+          layout.canonicalFrameWidth,
+          layout.canonicalFrameHeight,
+          renderScale,
+          !f.freeTransform && position.index === f.selected,
+          exportMode,
+          layout.frameRotation
+        );
+        targetCtx.drawImage(rendered.canvas, position.x - cx, position.y - cy, position.w, position.h);
+        renderedCuts.push({ position, rendered, cut });
       });
+      targetCtx.restore();
+
+      if (f.freeTransform) {
+        hitMap.push({
+          type: "strip",
+          line: strip.line,
+          index: strip.positions[0]?.index || 0,
+          quad: strip.quad,
+          rect: strip.bounds,
+          frameRect: strip.bounds,
+          stripRect: strip.rect,
+          stripTransform: strip.transform,
+          z: strip.transform.z
+        });
+      } else {
+        renderedCuts.forEach(({ position, rendered, cut }) => {
+          const frameRect = { x: position.x, y: position.y, w: position.w, h: position.h };
+          const photoRect = { x: position.x + rendered.photoRect.x, y: position.y + rendered.photoRect.y, w: rendered.photoRect.w, h: rendered.photoRect.h };
+          const frameQuad = rectCorners(frameRect).map((point) => transformStripPoint(point, strip.rect, strip.transform));
+          const photoQuad = rectCorners(photoRect).map((point) => transformStripPoint(point, strip.rect, strip.transform));
+          hitMap.push({
+            type: "cut",
+            index: position.index,
+            rect: boundsFromPoints(photoQuad),
+            quad: photoQuad,
+            localRect: rendered.localPhotoRect,
+            rotation: rendered.rotation,
+            frameRect: boundsFromPoints(frameQuad),
+            frameQuad,
+            image: cut.image,
+            stripRect: strip.rect,
+            stripTransform: strip.transform,
+            z: strip.transform.z
+          });
+        });
+      }
     });
+
+    if (f.freeTransform && !exportMode) {
+      const selected = layout.strips.find((strip) => strip.line === f.selectedStrip);
+      if (selected) {
+        const handles = drawFilm35TransformOutline(targetCtx, selected, layout);
+        const hit = hitMap.find((item) => item.line === selected.line);
+        if (hit) hit.handles = handles;
+      }
+    }
     return hitMap;
   }
 
@@ -1774,6 +2156,23 @@
     return point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h;
   }
 
+  function pointInPolygon(point, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const a = polygon[i];
+      const b = polygon[j];
+      const crosses = ((a.y > point.y) !== (b.y > point.y)) &&
+        (point.x < (b.x - a.x) * (point.y - a.y) / ((b.y - a.y) || 1e-9) + a.x);
+      if (crosses) inside = !inside;
+    }
+    return inside;
+  }
+
+  function pointDistance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
   function eventToLogical(event) {
     const rect = canvas.getBoundingClientRect();
     const px = (event.clientX - rect.left) * canvas.width / rect.width;
@@ -1781,9 +2180,26 @@
     return { x: px / state.renderScale, y: py / state.renderScale };
   }
 
+  function hitContainsPoint(hit, point) {
+    if (hit.frameQuad) return pointInPolygon(point, hit.frameQuad);
+    if (hit.quad) return pointInPolygon(point, hit.quad);
+    return pointInRect(point, hit.frameRect || hit.rect);
+  }
+
   function findHit(point) {
-    if (state.mode === "film35") return state.hitMap.find((hit) => pointInRect(point, hit.frameRect || hit.rect));
-    return state.hitMap.find((hit) => pointInRect(point, hit.rect));
+    if (state.mode !== "film35") return state.hitMap.find((hit) => pointInRect(point, hit.rect));
+    return [...state.hitMap].sort((a, b) => (b.z || 0) - (a.z || 0)).find((hit) => hitContainsPoint(hit, point));
+  }
+
+  function findFilm35TransformHandle(point) {
+    if (state.mode !== "film35" || !state.film35.freeTransform) return null;
+    const hit = state.hitMap.find((item) => item.type === "strip" && item.line === state.film35.selectedStrip);
+    const handles = hit?.handles;
+    if (!handles) return null;
+    if (pointDistance(point, handles.rotate) <= handles.radius) return { type: "rotate", hit, point: handles.rotate };
+    const corner = handles.corners.find((handle) => pointDistance(point, handle) <= handles.radius);
+    if (corner) return { type: "scale", hit, point: corner };
+    return null;
   }
 
   function clearLongPress() {
@@ -1792,7 +2208,43 @@
   }
 
   canvas.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
     const point = eventToLogical(event);
+
+    if (state.mode === "film35" && state.film35.freeTransform) {
+      const handle = findFilm35TransformHandle(point);
+      const hit = handle?.hit || findHit(point);
+      if (!hit || hit.type !== "strip") return;
+      state.film35.selectedStrip = hit.line;
+      ensureStripTransforms();
+      const transform = state.film35.stripTransforms[hit.line];
+      const center = {
+        x: hit.stripRect.x + hit.stripRect.w / 2 + transform.x,
+        y: hit.stripRect.y + hit.stripRect.h / 2 + transform.y
+      };
+      const type = handle?.type === "rotate" ? "strip-rotate" : handle?.type === "scale" ? "strip-scale" : "strip-move";
+      dragState = {
+        type,
+        pointerId: event.pointerId,
+        start: point,
+        transform,
+        startX: transform.x,
+        startY: transform.y,
+        startScale: transform.scale,
+        startRotation: transform.rotation,
+        center,
+        startDistance: Math.max(1, pointDistance(point, center)),
+        startAngle: Math.atan2(point.y - center.y, point.x - center.x),
+        moved: false
+      };
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add("is-transforming");
+      syncFilm35UI();
+      queueRender();
+      event.preventDefault();
+      return;
+    }
+
     const hit = findHit(point);
     if (!hit) return;
     if (state.mode === "film35") {
@@ -1809,6 +2261,7 @@
     }
     longPressTriggered = false;
     dragState = {
+      type: "image",
       pointerId: event.pointerId,
       start: point,
       image,
@@ -1817,6 +2270,7 @@
       rect: hit.rect,
       localRect: hit.localRect || hit.rect,
       rotation: hit.rotation || 0,
+      stripTransform: hit.stripTransform || null,
       index: hit.index,
       moved: false
     };
@@ -1845,7 +2299,34 @@
       dragState.moved = true;
       clearLongPress();
     }
-    const localDelta = mapOutputDeltaToLocal(dx, dy, dragState.rotation);
+
+    if (dragState.type === "strip-move") {
+      dragState.transform.x = clamp(dragState.startX + dx, -12000, 12000);
+      dragState.transform.y = clamp(dragState.startY + dy, -12000, 12000);
+      syncFilm35UI();
+      queueRender();
+      return;
+    }
+    if (dragState.type === "strip-scale") {
+      const distance = Math.max(1, pointDistance(point, dragState.center));
+      dragState.transform.scale = clamp(dragState.startScale * distance / dragState.startDistance, 0.1, 5);
+      syncFilm35UI();
+      queueRender();
+      return;
+    }
+    if (dragState.type === "strip-rotate") {
+      const angle = Math.atan2(point.y - dragState.center.y, point.x - dragState.center.x);
+      let rotation = dragState.startRotation + (angle - dragState.startAngle) * 180 / Math.PI;
+      rotation = ((rotation + 180) % 360 + 360) % 360 - 180;
+      dragState.transform.rotation = rotation;
+      syncFilm35UI();
+      queueRender();
+      return;
+    }
+
+    let outputDelta = { x: dx, y: dy };
+    if (dragState.stripTransform) outputDelta = inverseStripVector(dx, dy, dragState.stripTransform);
+    const localDelta = mapOutputDeltaToLocal(outputDelta.x, outputDelta.y, dragState.rotation);
     dragState.image.x = dragState.startX + localDelta.x / dragState.localRect.w * 200;
     dragState.image.y = dragState.startY + localDelta.y / dragState.localRect.h * 200;
     constrainImageToRect(dragState.image, dragState.localRect);
@@ -1857,7 +2338,7 @@
     clearLongPress();
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     canvas.releasePointerCapture?.(event.pointerId);
-    canvas.classList.remove("is-dragging");
+    canvas.classList.remove("is-dragging", "is-transforming");
     dragState = null;
     if (!longPressTriggered) scheduleProjectCommit(0);
   }
@@ -1868,6 +2349,12 @@
     const hit = findHit(eventToLogical(event));
     if (!hit) return;
     event.preventDefault();
+    if (state.mode === "film35" && state.film35.freeTransform) {
+      state.film35.selectedStrip = hit.line;
+      syncFilm35UI();
+      queueRender();
+      return;
+    }
     if (state.mode === "film35") {
       state.film35.selected = hit.index;
       syncFilm35UI();
@@ -1884,7 +2371,17 @@
   canvas.addEventListener("wheel", (event) => {
     const point = eventToLogical(event);
     const hit = findHit(point);
-    if (!hit?.image?.img) return;
+    if (!hit) return;
+    if (state.mode === "film35" && state.film35.freeTransform && hit.type === "strip") {
+      event.preventDefault();
+      state.film35.selectedStrip = hit.line;
+      const transform = state.film35.stripTransforms[hit.line];
+      transform.scale = clamp(transform.scale * (event.deltaY > 0 ? 0.94 : 1.06), 0.1, 5);
+      syncFilm35UI();
+      queueRender();
+      return;
+    }
+    if (!hit.image?.img) return;
     event.preventDefault();
     hit.image.zoom *= event.deltaY > 0 ? 0.94 : 1.06;
     constrainImageToRect(hit.image, hit.localRect || hit.rect);
@@ -1915,53 +2412,220 @@
     input.style.setProperty("--value", `${ratio}%`);
   }
 
-  function setPairValues(rangeId, numberId, value) {
+  function isTransientNumberText(raw) {
+    const value = String(raw ?? "").trim();
+    return value === "" || value === "-" || value === "+" || value === "." || value === "-." || value === "+.";
+  }
+
+  function parseEditableNumber(raw) {
+    if (isTransientNumberText(raw)) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function setNumberControlValue(element, value, force = false) {
+    if (!element) return;
+    if (!force && element.dataset.numberEditing === "true") return;
+    element.value = value;
+  }
+
+  function setPairValues(rangeId, numberId, value, options = {}) {
     const range = $(rangeId), number = $(numberId);
     if (range) { range.value = value; updateRangeVisual(range); }
-    if (number) number.value = value;
+    setNumberControlValue(number, value, Boolean(options.forceNumber));
   }
 
   function bindRangePair(rangeId, numberId, getter, setter, options = {}) {
     const range = $(rangeId), number = $(numberId);
-    const apply = (raw) => {
+    const displayValue = () => options.display ? options.display(getter()) : getter();
+    const applyRange = (raw) => {
       const value = Number(raw);
+      if (!Number.isFinite(value)) return;
       setter(value);
-      setPairValues(rangeId, numberId, options.display ? options.display(getter()) : getter());
+      setPairValues(rangeId, numberId, displayValue(), { forceNumber: true });
       options.after?.();
       queueRender();
     };
-    range.addEventListener("input", () => apply(range.value));
-    number.addEventListener("input", () => apply(number.value));
+    const applyNumberLive = () => {
+      const value = parseEditableNumber(number.value);
+      if (value === null) return;
+      setter(value);
+      if (range) {
+        range.value = displayValue();
+        updateRangeVisual(range);
+      }
+      queueRender();
+    };
+    const commitNumber = () => {
+      if (number.dataset.numberEditing !== "true") return;
+      number.dataset.numberEditing = "false";
+      const value = parseEditableNumber(number.value);
+      if (value !== null) setter(value);
+      setPairValues(rangeId, numberId, displayValue(), { forceNumber: true });
+      options.after?.();
+      queueRender();
+    };
+    range.addEventListener("input", () => applyRange(range.value));
+    number.addEventListener("focus", () => { number.dataset.numberEditing = "true"; });
+    number.addEventListener("input", applyNumberLive);
+    number.addEventListener("change", commitNumber);
+    number.addEventListener("blur", commitNumber);
+    number.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        number.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        number.dataset.numberEditing = "false";
+        setPairValues(rangeId, numberId, displayValue(), { forceNumber: true });
+        number.blur();
+      }
+    });
     updateRangeVisual(range);
   }
 
   function bindValue(id, getter, setter, eventName = "input", after = null) {
     const element = $(id);
+    if (element.type === "number") {
+      const applyLive = () => {
+        const value = parseEditableNumber(element.value);
+        if (value === null) return;
+        setter(value);
+        queueRender();
+      };
+      const commit = () => {
+        if (element.dataset.numberEditing !== "true") return;
+        element.dataset.numberEditing = "false";
+        const value = parseEditableNumber(element.value);
+        if (value !== null) setter(value);
+        setNumberControlValue(element, getter(), true);
+        after?.();
+        queueRender();
+      };
+      element.addEventListener("focus", () => { element.dataset.numberEditing = "true"; });
+      element.addEventListener("input", applyLive);
+      element.addEventListener("change", commit);
+      element.addEventListener("blur", commit);
+      element.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          element.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          element.dataset.numberEditing = "false";
+          setNumberControlValue(element, getter(), true);
+          element.blur();
+        }
+      });
+      return;
+    }
     element.addEventListener(eventName, () => {
-      const value = element.type === "checkbox" ? element.checked : element.type === "number" ? Number(element.value) : element.value;
+      const value = element.type === "checkbox" ? element.checked : element.value;
       setter(value);
       after?.();
       queueRender();
     });
   }
 
+  const INLINE_COLOR_SWATCHES = [
+    "#ffffff", "#f4efe4", "#d4c7aa", "#f0c94d", "#ff8a38", "#ff5f66", "#d75bb8", "#7867e8",
+    "#4a67d6", "#3a9ad9", "#59d4bd", "#3aaa72", "#7d8f45", "#9a6b4f", "#6f7472", "#000000"
+  ];
+
+  function syncInlineColorPicker(colorInput) {
+    if (!colorInput) return;
+    const control = colorInput.closest(".color-control");
+    if (!control) return;
+    const value = String(colorInput.value || "#000000").toLowerCase();
+    const current = control.querySelector(".color-current-swatch");
+    if (current) {
+      current.style.setProperty("--swatch-color", value);
+      current.title = `현재 색상 ${value}`;
+      current.setAttribute("aria-label", `현재 색상 ${value}`);
+    }
+    let matched = false;
+    control.querySelectorAll(".color-swatch[data-color]").forEach((button) => {
+      const selected = button.dataset.color === value;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      matched ||= selected;
+    });
+    current?.classList.toggle("is-selected", !matched);
+    current?.setAttribute("aria-pressed", String(!matched));
+  }
+
+  function syncAllInlineColorPickers() {
+    $$(".color-control input[type=color]").forEach(syncInlineColorPicker);
+  }
+
+  function setupInlineColorPickers() {
+    $$(".color-control").forEach((control) => {
+      if (control.dataset.inlinePaletteReady === "true") return;
+      const colorInput = control.querySelector('input[type="color"]');
+      if (!colorInput) return;
+      control.dataset.inlinePaletteReady = "true";
+      control.classList.add("has-inline-palette");
+      colorInput.classList.add("native-color-input");
+      colorInput.tabIndex = -1;
+      colorInput.setAttribute("aria-hidden", "true");
+
+      const palette = document.createElement("div");
+      palette.className = "inline-color-palette";
+      palette.setAttribute("role", "group");
+      palette.setAttribute("aria-label", "색상 빠른 선택");
+
+      const current = document.createElement("button");
+      current.type = "button";
+      current.className = "color-swatch color-current-swatch";
+      current.innerHTML = '<span class="visually-hidden">현재 색상</span>';
+      palette.appendChild(current);
+
+      INLINE_COLOR_SWATCHES.forEach((value) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "color-swatch";
+        button.dataset.color = value;
+        button.style.setProperty("--swatch-color", value);
+        button.title = value;
+        button.setAttribute("aria-label", `색상 ${value}`);
+        button.setAttribute("aria-pressed", "false");
+        button.addEventListener("click", () => {
+          colorInput.value = value;
+          colorInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        palette.appendChild(button);
+      });
+
+      colorInput.insertAdjacentElement("afterend", palette);
+      syncInlineColorPicker(colorInput);
+    });
+  }
+
   function bindColor(colorId, textId, getter, setter, after = null) {
     const color = $(colorId), text = $(textId);
     const apply = (value) => {
-      if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;
-      setter(value.toLowerCase());
-      color.value = value;
-      text.value = value.toLowerCase();
+      if (!/^#[0-9a-fA-F]{6}$/.test(value)) return false;
+      const normalized = value.toLowerCase();
+      setter(normalized);
+      color.value = normalized;
+      text.value = normalized;
+      syncInlineColorPicker(color);
       after?.();
       queueRender();
+      return true;
     };
     color.addEventListener("input", () => apply(color.value));
-    text.addEventListener("change", () => apply(text.value));
+    text.addEventListener("input", () => {
+      if (/^#[0-9a-fA-F]{6}$/.test(text.value)) apply(text.value);
+    });
+    text.addEventListener("change", () => {
+      if (!apply(text.value)) text.value = getter();
+    });
   }
 
   function syncTransformUI() {
     const image = getActiveImage();
-    const disabled = !image?.img;
+    const disabled = !image?.img || (state.mode === "film35" && state.film35.freeTransform);
     ["imageZoom", "imageZoomNumber", "imageOffsetX", "imageOffsetXNumber", "imageOffsetY", "imageOffsetYNumber", "imageAngle", "imageAngleNumber", "rotateLeftBtn", "rotateRightBtn", "resetTransformBtn"].forEach((id) => $(id).disabled = disabled);
     if (!image) return;
     let constraint = { minZoom: 1, maxZoom: 20 };
@@ -1986,11 +2650,16 @@
     setPairValues("grainRoughness", "grainRoughnessNumber", Math.round(e.grain.roughness * 100));
     $("grainColor").checked = e.grain.color;
     $("overlayEnabled").checked = e.overlay.enabled;
+    syncTextureLibraryUI();
     $("overlayType").value = e.overlay.type;
     $("overlayBlend").value = e.overlay.blend;
     setPairValues("overlayOpacity", "overlayOpacityNumber", Math.round(e.overlay.opacity * 100));
+    setPairValues("overlayZoom", "overlayZoomNumber", Math.round(e.overlay.zoom * 100));
+    setPairValues("overlayX", "overlayXNumber", Math.round(e.overlay.x));
+    setPairValues("overlayY", "overlayYNumber", Math.round(e.overlay.y));
     $("overlayIncludeFrame").checked = e.overlay.includeFrame;
-    $("overlayImageName").textContent = e.overlay.customName || "미등록";
+    const selectedTexture = getTextureEntry(e.overlay.type);
+    $("overlayImageName").textContent = e.overlay.type === "custom" ? (e.overlay.customName || "미등록") : (selectedTexture?.sourceName || selectedTexture?.name || "텍스처 선택");
     $("lightLeakEnabled").checked = e.lightLeak.enabled;
     $("lightLeakType").value = e.lightLeak.type;
     $("lightLeakColor").value = e.lightLeak.color;
@@ -2047,11 +2716,13 @@
     $("subtitleAutoSize").checked = s.autoSize;
     setPairValues("subtitleSize", "subtitleSizeNumber", s.size);
     setPairValues("subtitleWeight", "subtitleWeightNumber", s.weight);
+    $("subtitleWeightWrap").hidden = s.font !== "PretendardVariable";
     $("subtitleColor").value = s.color; $("subtitleColorText").value = s.color;
     $("subtitleStrokeColor").value = s.strokeColor; $("subtitleStrokeColorText").value = s.strokeColor;
     setPairValues("subtitleStrokeWidth", "subtitleStrokeWidthNumber", s.strokeWidth);
     $("subtitleLetterSpacing").value = s.letterSpacing;
     $("subtitleLineHeight").value = s.lineHeight;
+    $("subtitleBold").checked = Boolean(s.bold);
     $("subtitleItalic").checked = s.italic;
     $("subtitleAnchor").value = s.anchor;
     setPairValues("subtitleX", "subtitleXNumber", s.x);
@@ -2061,16 +2732,33 @@
 
   function syncFilm35UI() {
     const f = state.film35;
-    $("film35Count").value = f.count;
-    $("film35BreakEvery").value = f.breakEvery;
+    setNumberControlValue($("film35Count"), f.count);
+    setNumberControlValue($("film35BreakEvery"), f.breakEvery);
     $("film35SelectedCut").max = f.count;
-    $("film35SelectedCut").value = f.selected + 1;
+    setNumberControlValue($("film35SelectedCut"), f.selected + 1);
     $("film35EffectScope").value = f.effectScope;
     $("film35PerCutLightLeak").checked = f.perCutLightLeak;
     setPairValues("film35RowGap", "film35RowGapNumber", f.rowGap);
     setPairValues("film35RowOffset", "film35RowOffsetNumber", f.rowOffset);
     $("film35RandomOffset").checked = f.randomOffset;
     setPairValues("film35OffsetJitter", "film35OffsetJitterNumber", f.offsetJitter);
+    const transforms = ensureStripTransforms();
+    const strip = transforms[f.selectedStrip] || transforms[0];
+    const toggle = $("film35FreeTransformToggle");
+    toggle.classList.toggle("is-active", f.freeTransform);
+    toggle.setAttribute("aria-pressed", String(f.freeTransform));
+    toggle.textContent = f.freeTransform ? "자유변환 모드 종료" : "자유변환 모드";
+    $("film35FreeTransformControls").hidden = !f.freeTransform;
+    $("film35SelectedStrip").max = transforms.length;
+    $("film35SelectedStrip").value = f.selectedStrip + 1;
+    $("film35StripX").value = Math.round(strip.x * 10) / 10;
+    $("film35StripY").value = Math.round(strip.y * 10) / 10;
+    setPairValues("film35StripScale", "film35StripScaleNumber", Math.round(strip.scale * 1000) / 10);
+    setPairValues("film35StripRotation", "film35StripRotationNumber", Math.round(strip.rotation * 10) / 10);
+    const minZ = Math.min(...transforms.map((item) => item.z));
+    const maxZ = Math.max(...transforms.map((item) => item.z));
+    $("film35StripBackward").disabled = strip.z <= minZ;
+    $("film35StripForward").disabled = strip.z >= maxZ;
     $("film35TextEnabled").checked = f.textEnabled;
     $("film35EdgeText").value = f.edgeText;
     $("film35FitCanvas").checked = f.fitCanvas;
@@ -2085,6 +2773,7 @@
     $("film35FitPaddingWrap").hidden = !f.fitCanvas;
     setPairValues("film35FitPadding", "film35FitPaddingNumber", f.fitPadding);
     $("film35ShadowEnabled").checked = f.shadow.enabled;
+    $("film35BaseColor").value = f.baseColor; $("film35BaseColorText").value = f.baseColor;
     $("film35ShadowColor").value = f.shadow.color; $("film35ShadowColorText").value = f.shadow.color;
     setPairValues("film35ShadowOpacity", "film35ShadowOpacityNumber", Math.round(f.shadow.opacity * 100));
     setPairValues("film35ShadowBlur", "film35ShadowBlurNumber", f.shadow.blur);
@@ -2103,10 +2792,12 @@
   function syncModeUI() {
     $$(".mode-tab").forEach((button) => button.classList.toggle("is-active", button.dataset.mode === state.mode));
     $$(".mode-panel").forEach((panel) => panel.hidden = panel.dataset.panel !== state.mode);
+    $$("[data-detail-panel]").forEach((panel) => panel.hidden = panel.dataset.detailPanel !== state.mode);
     $("modeBadge").textContent = modeLabels[state.mode];
     $("previewStatus").textContent = `${modeLabels[state.mode]} · 실시간 미리보기`;
-    $("[data-subtitle-panel]");
-    document.querySelector("[data-subtitle-panel]").hidden = state.mode !== "movie";
+    canvas.classList.toggle("is-free-transform", state.mode === "film35" && state.film35.freeTransform);
+    $("film35EffectScopeBlock").hidden = state.mode !== "film35";
+    $("film35PerCutLightLeakRow").hidden = state.mode !== "film35";
     $$(".segment[data-orientation-target]").forEach((button) => {
       const target = button.dataset.orientationTarget;
       button.classList.toggle("is-active", state[target].orientation === button.dataset.value);
@@ -2117,7 +2808,10 @@
     $("viewfinderStyle").value = state.viewfinder.style;
     setPairValues("viewfinderWidth", "viewfinderWidthNumber", state.viewfinder.width);
     $("viewfinderGrid").checked = state.viewfinder.grid;
-    $("viewfinderGridColor").value = state.viewfinder.gridColor;
+    $("viewfinderGridStyle").value = state.viewfinder.gridStyle;
+    $("viewfinderGuideColor").value = state.viewfinder.guideColor;
+    $("viewfinderTextColor").value = state.viewfinder.textColor;
+    $("viewfinderFrameColor").value = state.viewfinder.frameColor;
     $("viewfinderRec").checked = state.viewfinder.rec;
     $("viewfinderRecRow").hidden = state.viewfinder.style === "film";
     $("film120ImageName").textContent = state.film120.image.name || "프레임 안쪽을 클릭해도 사진을 추가할 수 있습니다.";
@@ -2128,6 +2822,7 @@
     $("film120EdgeText").value = state.film120.edgeText;
     syncTransformUI();
     syncEffectsUI();
+    syncAllInlineColorPickers();
     updateCanvasHint();
   }
 
@@ -2196,7 +2891,10 @@
     bindValue("viewfinderStyle", () => state.viewfinder.style, (v) => state.viewfinder.style = v, "change", syncModeUI);
     bindRangePair("viewfinderWidth", "viewfinderWidthNumber", () => state.viewfinder.width, (v) => state.viewfinder.width = clamp(v, 640, 4096), { after: constrainActiveImage });
     bindValue("viewfinderGrid", () => state.viewfinder.grid, (v) => state.viewfinder.grid = v, "change");
-    bindValue("viewfinderGridColor", () => state.viewfinder.gridColor, (v) => state.viewfinder.gridColor = v, "change");
+    bindValue("viewfinderGridStyle", () => state.viewfinder.gridStyle, (v) => state.viewfinder.gridStyle = v, "change");
+    bindValue("viewfinderGuideColor", () => state.viewfinder.guideColor, (v) => state.viewfinder.guideColor = v, "change");
+    bindValue("viewfinderTextColor", () => state.viewfinder.textColor, (v) => state.viewfinder.textColor = v, "change");
+    bindValue("viewfinderFrameColor", () => state.viewfinder.frameColor, (v) => state.viewfinder.frameColor = v, "change");
     bindValue("viewfinderRec", () => state.viewfinder.rec, (v) => state.viewfinder.rec = v, "change");
     bindRangePair("film120Width", "film120WidthNumber", () => state.film120.width, (v) => state.film120.width = clamp(v, 640, 4096), { after: constrainActiveImage });
     bindColor("film120FrameColor", "film120FrameColorText", () => state.film120.frameColor, (v) => state.film120.frameColor = v);
@@ -2219,7 +2917,12 @@
       Object.assign(state.movie.subtitle, subtitleTemplates[id], { template: id });
       syncMovieUI(); queueRender();
     });
-    bindValue("subtitleFont", () => state.movie.subtitle.font, (v) => state.movie.subtitle.font = v, "change");
+    $("subtitleFont").addEventListener("change", () => {
+      const nextFont = $("subtitleFont").value;
+      state.movie.subtitle.font = nextFont;
+      $("subtitleWeightWrap").hidden = nextFont !== "PretendardVariable";
+      queueRender();
+    });
     bindValue("subtitleAutoSize", () => state.movie.subtitle.autoSize, (v) => state.movie.subtitle.autoSize = v, "change");
     bindRangePair("subtitleSize", "subtitleSizeNumber", () => state.movie.subtitle.size, (v) => state.movie.subtitle.size = clamp(v, 12, 180));
     bindRangePair("subtitleWeight", "subtitleWeightNumber", () => state.movie.subtitle.weight, (v) => state.movie.subtitle.weight = clamp(v, 100, 900));
@@ -2228,6 +2931,7 @@
     bindRangePair("subtitleStrokeWidth", "subtitleStrokeWidthNumber", () => state.movie.subtitle.strokeWidth, (v) => state.movie.subtitle.strokeWidth = clamp(v, 0, 12));
     bindValue("subtitleLetterSpacing", () => state.movie.subtitle.letterSpacing, (v) => state.movie.subtitle.letterSpacing = clamp(v, -10, 30));
     bindValue("subtitleLineHeight", () => state.movie.subtitle.lineHeight, (v) => state.movie.subtitle.lineHeight = clamp(v, .7, 3));
+    bindValue("subtitleBold", () => state.movie.subtitle.bold, (v) => state.movie.subtitle.bold = v, "change");
     bindValue("subtitleItalic", () => state.movie.subtitle.italic, (v) => state.movie.subtitle.italic = v, "change");
     bindValue("subtitleAnchor", () => state.movie.subtitle.anchor, (v) => state.movie.subtitle.anchor = v, "change");
     bindRangePair("subtitleX", "subtitleXNumber", () => state.movie.subtitle.x, (v) => state.movie.subtitle.x = clamp(v, -100, 100));
@@ -2257,7 +2961,7 @@
     });
 
     bindValue("film35Count", () => state.film35.count, (v) => { state.film35.count = clamp(Math.round(v), 1, 36); ensureCuts(); }, "input", () => { syncFilm35UI(); syncTransformUI(); syncEffectsUI(); });
-    bindValue("film35BreakEvery", () => state.film35.breakEvery, (v) => state.film35.breakEvery = clamp(Math.round(v), 1, 36));
+    bindValue("film35BreakEvery", () => state.film35.breakEvery, (v) => { state.film35.breakEvery = clamp(Math.round(v), 1, 36); ensureStripTransforms(); }, "input", syncFilm35UI);
     bindValue("film35SelectedCut", () => state.film35.selected + 1, (v) => state.film35.selected = clamp(Math.round(v) - 1, 0, state.film35.count - 1), "input", () => { syncTransformUI(); syncEffectsUI(); });
     bindValue("film35EffectScope", () => state.film35.effectScope, (v) => state.film35.effectScope = v, "change", syncEffectsUI);
     bindValue("film35PerCutLightLeak", () => state.film35.perCutLightLeak, (v) => state.film35.perCutLightLeak = v, "change");
@@ -2272,6 +2976,29 @@
     bindValue("film35RandomOffset", () => state.film35.randomOffset, (v) => state.film35.randomOffset = v, "change");
     bindRangePair("film35OffsetJitter", "film35OffsetJitterNumber", () => state.film35.offsetJitter, (v) => state.film35.offsetJitter = clamp(v, 0, 800));
     $("film35ShuffleOffset").addEventListener("click", () => { state.film35.offsetSeed = uidSeed(); queueRender(); });
+    $("film35FreeTransformToggle").addEventListener("click", () => {
+      state.film35.freeTransform = !state.film35.freeTransform;
+      ensureStripTransforms();
+      canvas.classList.toggle("is-free-transform", state.film35.freeTransform);
+      syncFilm35UI();
+      syncTransformUI();
+      queueRender();
+    });
+    bindValue("film35SelectedStrip", () => state.film35.selectedStrip + 1, (v) => {
+      state.film35.selectedStrip = clamp(Math.round(v) - 1, 0, getFilm35LineCount() - 1);
+    }, "input", syncFilm35UI);
+    bindValue("film35StripX", () => getSelectedStripTransform().x, (v) => getSelectedStripTransform().x = clamp(v, -12000, 12000), "input", syncFilm35UI);
+    bindValue("film35StripY", () => getSelectedStripTransform().y, (v) => getSelectedStripTransform().y = clamp(v, -12000, 12000), "input", syncFilm35UI);
+    bindRangePair("film35StripScale", "film35StripScaleNumber", () => getSelectedStripTransform().scale * 100, (v) => getSelectedStripTransform().scale = clamp(v / 100, 0.1, 5), { after: syncFilm35UI });
+    bindRangePair("film35StripRotation", "film35StripRotationNumber", () => getSelectedStripTransform().rotation, (v) => getSelectedStripTransform().rotation = clamp(v, -180, 180), { after: syncFilm35UI });
+    $("film35StripBackward").addEventListener("click", () => { moveSelectedStripLayer(-1); syncFilm35UI(); queueRender(); });
+    $("film35StripForward").addEventListener("click", () => { moveSelectedStripLayer(1); syncFilm35UI(); queueRender(); });
+    $("film35StripReset").addEventListener("click", () => {
+      const strip = getSelectedStripTransform();
+      Object.assign(strip, { x: 0, y: 0, scale: 1, rotation: 0 });
+      syncFilm35UI();
+      queueRender();
+    });
     bindValue("film35TextEnabled", () => state.film35.textEnabled, (v) => state.film35.textEnabled = v, "change");
     bindValue("film35EdgeText", () => state.film35.edgeText, (v) => state.film35.edgeText = v);
     bindValue("film35FitCanvas", () => state.film35.fitCanvas, (v) => state.film35.fitCanvas = v, "change", syncFilm35UI);
@@ -2289,6 +3016,7 @@
     bindValue("film35SizeMode", () => state.film35.sizeMode, (v) => state.film35.sizeMode = v, "change", syncFilm35UI);
     bindRangePair("film35FrameWidth", "film35FrameWidthNumber", () => state.film35.frameWidth, (v) => state.film35.frameWidth = clamp(v, 120, 1600));
     bindRangePair("film35FitPadding", "film35FitPaddingNumber", () => state.film35.fitPadding, (v) => state.film35.fitPadding = clamp(v, 0, 1600));
+    bindColor("film35BaseColor", "film35BaseColorText", () => state.film35.baseColor, (v) => state.film35.baseColor = v);
     bindValue("film35ShadowEnabled", () => state.film35.shadow.enabled, (v) => state.film35.shadow.enabled = v, "change");
     bindColor("film35ShadowColor", "film35ShadowColorText", () => state.film35.shadow.color, (v) => state.film35.shadow.color = v);
     bindRangePair("film35ShadowOpacity", "film35ShadowOpacityNumber", () => state.film35.shadow.opacity * 100, (v) => state.film35.shadow.opacity = clamp(v / 100, 0, 1));
@@ -2314,11 +3042,42 @@
     $("grainReseed").addEventListener("click", () => { getActiveEffects().grain.seed = uidSeed(); grainCache.clear(); queueRender(); });
 
     bindValue("overlayEnabled", () => getActiveEffects().overlay.enabled, (v) => getActiveEffects().overlay.enabled = v, "change", updateEffectSummary);
-    bindValue("overlayType", () => getActiveEffects().overlay.type, (v) => getActiveEffects().overlay.type = v, "change");
+    bindValue("overlayType", () => getActiveEffects().overlay.type, (v) => { const overlay = getActiveEffects().overlay; overlay.type = v; overlay.enabled = true; }, "change", syncEffectsUI);
     bindValue("overlayBlend", () => getActiveEffects().overlay.blend, (v) => getActiveEffects().overlay.blend = v, "change");
     bindRangePair("overlayOpacity", "overlayOpacityNumber", () => getActiveEffects().overlay.opacity * 100, (v) => getActiveEffects().overlay.opacity = clamp(v / 100, 0, 1));
+    bindRangePair("overlayZoom", "overlayZoomNumber", () => getActiveEffects().overlay.zoom * 100, (v) => getActiveEffects().overlay.zoom = clamp(v / 100, 1, 4));
+    bindRangePair("overlayX", "overlayXNumber", () => getActiveEffects().overlay.x, (v) => getActiveEffects().overlay.x = clamp(v, -100, 100));
+    bindRangePair("overlayY", "overlayYNumber", () => getActiveEffects().overlay.y, (v) => getActiveEffects().overlay.y = clamp(v, -100, 100));
     bindValue("overlayIncludeFrame", () => getActiveEffects().overlay.includeFrame, (v) => getActiveEffects().overlay.includeFrame = v, "change");
-    $("overlayReseed").addEventListener("click", () => { getActiveEffects().overlay.seed = uidSeed(); queueRender(); });
+    $("overlayResetTransform").addEventListener("click", () => {
+      Object.assign(getActiveEffects().overlay, { zoom: 1, x: 0, y: 0 });
+      syncEffectsUI(); queueRender();
+    });
+    $("textureZipBtn").addEventListener("click", () => $("textureZipInput").click());
+    $("textureZipInput").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const status = $("textureLibraryStatus");
+      const button = $("textureZipBtn");
+      status.textContent = "ZIP 읽는 중…";
+      button.disabled = true;
+      try {
+        const library = await extractTextureZip(file);
+        state.textureLibrary = library;
+        const overlay = getActiveEffects().overlay;
+        overlay.type = library[0] ? `texture:${library[0].id}` : "custom";
+        overlay.enabled = Boolean(library.length) || overlay.enabled;
+        syncEffectsUI();
+        queueRender();
+      } catch (error) {
+        console.error(error);
+        status.textContent = "ZIP 불러오기 실패";
+        alert(error.message || "텍스처 ZIP을 읽지 못했습니다.");
+      } finally {
+        button.disabled = false;
+        event.target.value = "";
+      }
+    });
     $("overlayUploadBtn").addEventListener("click", () => $("overlayImageInput").click());
     $("overlayImageInput").addEventListener("change", (event) => {
       const file = event.target.files[0];
@@ -2330,8 +3089,10 @@
         overlay.customName = file.name;
         overlay.type = "custom";
         overlay.enabled = true;
+        overlay.zoom = 1; overlay.x = 0; overlay.y = 0;
         syncEffectsUI(); queueRender();
       });
+      event.target.value = "";
     });
 
     bindValue("lightLeakEnabled", () => getActiveEffects().lightLeak.enabled, (v) => getActiveEffects().lightLeak.enabled = v, "change", updateEffectSummary);
@@ -2454,6 +3215,7 @@
 
   async function initializeApp() {
     setupFilterMenu();
+    setupInlineColorPickers();
     bindControls();
     $$("input[type=range]").forEach(updateRangeVisual);
     syncModeUI();
