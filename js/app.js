@@ -2698,31 +2698,400 @@
     });
   }
 
-  const INLINE_COLOR_SWATCHES = [
-    "#ffffff", "#f4efe4", "#d4c7aa", "#f0c94d", "#ff8a38", "#ff5f66", "#d75bb8", "#7867e8",
-    "#4a67d6", "#3a9ad9", "#59d4bd", "#3aaa72", "#7d8f45", "#9a6b4f", "#6f7472", "#000000"
-  ];
+  const WEB_COLOR_PICKER_STYLE_ID = "webColorPickerStyles";
+  const webColorPicker = {
+    input: null,
+    control: null,
+    trigger: null,
+    popover: null,
+    sv: null,
+    svThumb: null,
+    hue: null,
+    hueThumb: null,
+    preview: null,
+    hexValue: null,
+    hsv: { h: 0, s: 0, v: 0 },
+    open: false
+  };
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  function hexToRgb(hex) {
+    const normalized = String(hex || "#000000").replace("#", "");
+    const value = /^[0-9a-fA-F]{6}$/.test(normalized) ? normalized : "000000";
+    return {
+      r: parseInt(value.slice(0, 2), 16),
+      g: parseInt(value.slice(2, 4), 16),
+      b: parseInt(value.slice(4, 6), 16)
+    };
+  }
+
+  function rgbToHex(r, g, b) {
+    const part = (value) => Math.round(Math.max(0, Math.min(255, value))).toString(16).padStart(2, "0");
+    return `#${part(r)}${part(g)}${part(b)}`;
+  }
+
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    let h = 0;
+    if (delta) {
+      if (max === r) h = ((g - b) / delta) % 6;
+      else if (max === g) h = (b - r) / delta + 2;
+      else h = (r - g) / delta + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return { h, s: max === 0 ? 0 : delta / max, v: max };
+  }
+
+  function hsvToRgb(h, s, v) {
+    h = ((Number(h) || 0) % 360 + 360) % 360;
+    s = clamp01(s); v = clamp01(v);
+    const chroma = v * s;
+    const x = chroma * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = v - chroma;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) [r, g, b] = [chroma, x, 0];
+    else if (h < 120) [r, g, b] = [x, chroma, 0];
+    else if (h < 180) [r, g, b] = [0, chroma, x];
+    else if (h < 240) [r, g, b] = [0, x, chroma];
+    else if (h < 300) [r, g, b] = [x, 0, chroma];
+    else [r, g, b] = [chroma, 0, x];
+    return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
+  }
+
+  function injectWebColorPickerStyles() {
+    if (document.getElementById(WEB_COLOR_PICKER_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = WEB_COLOR_PICKER_STYLE_ID;
+    style.textContent = `
+      .color-control .native-color-input,
+      .color-control input[type="color"].web-color-native {
+        display: none !important;
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .web-color-trigger {
+        position: relative;
+        display: block;
+        width: 100%;
+        min-width: 38px;
+        height: 39px;
+        padding: 4px;
+        border: 1px solid var(--line, #31413c);
+        border-radius: 10px;
+        background: #0e1211;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      .web-color-trigger::before {
+        content: "";
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 6px;
+        background: var(--picker-color, #000000);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+      }
+      .web-color-trigger:hover,
+      .web-color-trigger:focus-visible,
+      .web-color-trigger[aria-expanded="true"] {
+        border-color: var(--accent-2, #59d4bd);
+        box-shadow: 0 0 0 3px rgba(89,212,189,.12);
+        outline: none;
+      }
+      .web-color-popover {
+        position: fixed;
+        z-index: 100000;
+        display: none;
+        width: min(330px, calc(100vw - 16px));
+        padding: 12px;
+        border: 1px solid rgba(89,212,189,.48);
+        border-radius: 14px;
+        background: #101513;
+        box-shadow: 0 18px 54px rgba(0,0,0,.58), 0 0 0 1px rgba(255,255,255,.035) inset;
+        color: #eef4f1;
+        overscroll-behavior: contain;
+      }
+      .web-color-popover.is-open { display: block; }
+      .web-color-sv {
+        position: relative;
+        width: 100%;
+        height: clamp(190px, 36vh, 235px);
+        border-radius: 10px;
+        background:
+          linear-gradient(to top, #000, transparent),
+          linear-gradient(to right, #fff, hsl(var(--picker-hue, 0) 100% 50%));
+        cursor: crosshair;
+        touch-action: none;
+        overflow: hidden;
+      }
+      .web-color-sv-thumb,
+      .web-color-hue-thumb {
+        position: absolute;
+        pointer-events: none;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        box-shadow: 0 1px 5px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.45);
+        transform: translate(-50%, -50%);
+      }
+      .web-color-sv-thumb { width: 18px; height: 18px; }
+      .web-color-hue {
+        position: relative;
+        width: 100%;
+        height: 18px;
+        margin-top: 12px;
+        border-radius: 999px;
+        background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+        cursor: ew-resize;
+        touch-action: none;
+      }
+      .web-color-hue-thumb {
+        top: 50%;
+        width: 22px;
+        height: 22px;
+        background: hsl(var(--picker-hue, 0) 100% 50%);
+      }
+      .web-color-footer {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .web-color-preview {
+        width: 42px;
+        height: 36px;
+        border: 1px solid rgba(255,255,255,.22);
+        border-radius: 8px;
+        background: var(--picker-color, #000000);
+      }
+      .web-color-hex {
+        min-width: 0;
+        height: 36px;
+        padding: 8px 10px;
+        border: 1px solid var(--line, #31413c);
+        border-radius: 8px;
+        background: #090d0c;
+        color: #f4f7f5;
+        font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-transform: lowercase;
+      }
+      .web-color-close {
+        height: 36px;
+        padding: 0 12px;
+        border: 1px solid var(--line, #31413c);
+        border-radius: 8px;
+        background: #18201d;
+        color: #dce5e1;
+        font: 700 12px/1 PretendardVariable, sans-serif;
+        cursor: pointer;
+      }
+      .web-color-close:hover,
+      .web-color-close:focus-visible { border-color: var(--accent-2, #59d4bd); color: #fff; outline: none; }
+      @media (max-width: 520px) {
+        .web-color-popover {
+          width: min(330px, calc(100vw - 12px));
+          padding: 10px;
+          border-radius: 13px;
+        }
+        .web-color-sv { height: min(220px, 34vh); min-height: 180px; }
+        .web-color-footer { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 6px; }
+        .web-color-preview { width: 38px; }
+        .web-color-close { padding-inline: 10px; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureWebColorPicker() {
+    if (webColorPicker.popover) return webColorPicker.popover;
+    injectWebColorPickerStyles();
+    const popover = document.createElement("div");
+    popover.className = "web-color-popover";
+    popover.setAttribute("role", "dialog");
+    popover.setAttribute("aria-label", "색상 선택");
+    popover.innerHTML = `
+      <div class="web-color-sv" aria-label="채도와 밝기 선택">
+        <span class="web-color-sv-thumb"></span>
+      </div>
+      <div class="web-color-hue" aria-label="색상 계열 선택">
+        <span class="web-color-hue-thumb"></span>
+      </div>
+      <div class="web-color-footer">
+        <span class="web-color-preview" aria-hidden="true"></span>
+        <input class="web-color-hex" type="text" inputmode="text" maxlength="7" spellcheck="false" aria-label="HEX 색상값">
+        <button class="web-color-close" type="button">닫기</button>
+      </div>
+    `;
+    document.body.appendChild(popover);
+    webColorPicker.popover = popover;
+    webColorPicker.sv = popover.querySelector(".web-color-sv");
+    webColorPicker.svThumb = popover.querySelector(".web-color-sv-thumb");
+    webColorPicker.hue = popover.querySelector(".web-color-hue");
+    webColorPicker.hueThumb = popover.querySelector(".web-color-hue-thumb");
+    webColorPicker.preview = popover.querySelector(".web-color-preview");
+    webColorPicker.hexValue = popover.querySelector(".web-color-hex");
+
+    const updateFromPointer = (event, type) => {
+      if (!webColorPicker.input) return;
+      const target = type === "sv" ? webColorPicker.sv : webColorPicker.hue;
+      const rect = target.getBoundingClientRect();
+      const x = clamp01((event.clientX - rect.left) / Math.max(1, rect.width));
+      const y = clamp01((event.clientY - rect.top) / Math.max(1, rect.height));
+      if (type === "sv") {
+        webColorPicker.hsv.s = x;
+        webColorPicker.hsv.v = 1 - y;
+      } else {
+        webColorPicker.hsv.h = x * 360;
+      }
+      applyWebColorPickerValue();
+    };
+
+    const bindPointerSurface = (element, type) => {
+      element.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        element.setPointerCapture?.(event.pointerId);
+        updateFromPointer(event, type);
+      });
+      element.addEventListener("pointermove", (event) => {
+        if (!element.hasPointerCapture?.(event.pointerId)) return;
+        event.preventDefault();
+        updateFromPointer(event, type);
+      });
+      element.addEventListener("pointerup", (event) => element.releasePointerCapture?.(event.pointerId));
+      element.addEventListener("pointercancel", (event) => element.releasePointerCapture?.(event.pointerId));
+    };
+    bindPointerSurface(webColorPicker.sv, "sv");
+    bindPointerSurface(webColorPicker.hue, "hue");
+
+    webColorPicker.hexValue.addEventListener("input", () => {
+      const value = webColorPicker.hexValue.value.trim();
+      if (!/^#[0-9a-fA-F]{6}$/.test(value) || !webColorPicker.input) return;
+      setWebColorPickerFromHex(value, true);
+    });
+    webColorPicker.hexValue.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        webColorPicker.hexValue.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closeWebColorPicker();
+      }
+    });
+    popover.querySelector(".web-color-close").addEventListener("click", closeWebColorPicker);
+
+    document.addEventListener("pointerdown", (event) => {
+      if (!webColorPicker.open) return;
+      if (popover.contains(event.target) || webColorPicker.trigger?.contains(event.target)) return;
+      closeWebColorPicker();
+    }, true);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && webColorPicker.open) closeWebColorPicker();
+    });
+    window.addEventListener("resize", positionWebColorPicker);
+    window.addEventListener("scroll", positionWebColorPicker, true);
+    return popover;
+  }
+
+  function renderWebColorPicker() {
+    if (!webColorPicker.popover) return;
+    const { h, s, v } = webColorPicker.hsv;
+    const rgb = hsvToRgb(h, s, v);
+    const value = rgbToHex(rgb.r, rgb.g, rgb.b);
+    webColorPicker.popover.style.setProperty("--picker-hue", String(h));
+    webColorPicker.popover.style.setProperty("--picker-color", value);
+    webColorPicker.svThumb.style.left = `${s * 100}%`;
+    webColorPicker.svThumb.style.top = `${(1 - v) * 100}%`;
+    webColorPicker.hueThumb.style.left = `${(h / 360) * 100}%`;
+    webColorPicker.preview.style.setProperty("--picker-color", value);
+    if (document.activeElement !== webColorPicker.hexValue) webColorPicker.hexValue.value = value;
+  }
+
+  function applyWebColorPickerValue() {
+    if (!webColorPicker.input) return;
+    const rgb = hsvToRgb(webColorPicker.hsv.h, webColorPicker.hsv.s, webColorPicker.hsv.v);
+    const value = rgbToHex(rgb.r, rgb.g, rgb.b);
+    webColorPicker.input.value = value;
+    webColorPicker.input.dispatchEvent(new Event("input", { bubbles: true }));
+    renderWebColorPicker();
+  }
+
+  function setWebColorPickerFromHex(value, dispatch = false) {
+    const normalized = /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : "#000000";
+    const rgb = hexToRgb(normalized);
+    webColorPicker.hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+    if (dispatch && webColorPicker.input) {
+      webColorPicker.input.value = normalized;
+      webColorPicker.input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    renderWebColorPicker();
+  }
+
+  function positionWebColorPicker() {
+    if (!webColorPicker.open || !webColorPicker.control || !webColorPicker.popover) return;
+    const anchor = webColorPicker.control.getBoundingClientRect();
+    const picker = webColorPicker.popover;
+    const margin = 8;
+    const width = picker.offsetWidth;
+    const height = picker.offsetHeight;
+    let left = anchor.left;
+    let top = anchor.bottom + margin;
+    if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
+    if (left < margin) left = margin;
+    if (top + height > window.innerHeight - margin) top = anchor.top - height - margin;
+    if (top < margin) top = margin;
+    picker.style.left = `${Math.round(left)}px`;
+    picker.style.top = `${Math.round(top)}px`;
+  }
+
+  function openWebColorPicker(colorInput, trigger) {
+    const popover = ensureWebColorPicker();
+    if (webColorPicker.trigger && webColorPicker.trigger !== trigger) {
+      webColorPicker.trigger.setAttribute("aria-expanded", "false");
+    }
+    webColorPicker.input = colorInput;
+    webColorPicker.control = colorInput.closest(".color-control") || trigger;
+    webColorPicker.trigger = trigger;
+    setWebColorPickerFromHex(colorInput.value || "#000000");
+    webColorPicker.open = true;
+    trigger.setAttribute("aria-expanded", "true");
+    popover.classList.add("is-open");
+    popover.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(positionWebColorPicker);
+  }
+
+  function closeWebColorPicker() {
+    if (!webColorPicker.open) return;
+    webColorPicker.open = false;
+    webColorPicker.trigger?.setAttribute("aria-expanded", "false");
+    webColorPicker.popover?.classList.remove("is-open");
+    webColorPicker.popover?.setAttribute("aria-hidden", "true");
+  }
 
   function syncInlineColorPicker(colorInput) {
     if (!colorInput) return;
-    const control = colorInput.closest(".color-control");
-    if (!control) return;
     const value = String(colorInput.value || "#000000").toLowerCase();
-    const current = control.querySelector(".color-current-swatch");
-    if (current) {
-      current.style.setProperty("--swatch-color", value);
-      current.title = `현재 색상 ${value}`;
-      current.setAttribute("aria-label", `현재 색상 ${value}`);
+    const control = colorInput.closest(".color-control");
+    const trigger = control?.querySelector(".web-color-trigger");
+    if (trigger) {
+      trigger.style.setProperty("--picker-color", value);
+      trigger.title = `색상 선택 ${value}`;
+      trigger.setAttribute("aria-label", `현재 색상 ${value}. 색상 선택`);
     }
-    let matched = false;
-    control.querySelectorAll(".color-swatch[data-color]").forEach((button) => {
-      const selected = button.dataset.color === value;
-      button.classList.toggle("is-selected", selected);
-      button.setAttribute("aria-pressed", String(selected));
-      matched ||= selected;
-    });
-    current?.classList.toggle("is-selected", !matched);
-    current?.setAttribute("aria-pressed", String(!matched));
+    if (webColorPicker.open && webColorPicker.input === colorInput) {
+      const rgb = hexToRgb(value);
+      webColorPicker.hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+      renderWebColorPicker();
+    }
   }
 
   function syncAllInlineColorPickers() {
@@ -2730,44 +3099,26 @@
   }
 
   function setupInlineColorPickers() {
-    $$(".color-control").forEach((control) => {
-      if (control.dataset.inlinePaletteReady === "true") return;
-      const colorInput = control.querySelector('input[type="color"]');
-      if (!colorInput) return;
-      control.dataset.inlinePaletteReady = "true";
-      control.classList.add("has-inline-palette");
-      colorInput.classList.add("native-color-input");
+    injectWebColorPickerStyles();
+    $$(".color-control input[type=color]").forEach((colorInput) => {
+      const control = colorInput.closest(".color-control");
+      if (!control || colorInput.dataset.webPickerReady === "true") return;
+      colorInput.dataset.webPickerReady = "true";
+      colorInput.classList.add("web-color-native");
       colorInput.tabIndex = -1;
       colorInput.setAttribute("aria-hidden", "true");
 
-      const palette = document.createElement("div");
-      palette.className = "inline-color-palette";
-      palette.setAttribute("role", "group");
-      palette.setAttribute("aria-label", "색상 빠른 선택");
-
-      const current = document.createElement("button");
-      current.type = "button";
-      current.className = "color-swatch color-current-swatch";
-      current.innerHTML = '<span class="visually-hidden">현재 색상</span>';
-      palette.appendChild(current);
-
-      INLINE_COLOR_SWATCHES.forEach((value) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "color-swatch";
-        button.dataset.color = value;
-        button.style.setProperty("--swatch-color", value);
-        button.title = value;
-        button.setAttribute("aria-label", `색상 ${value}`);
-        button.setAttribute("aria-pressed", "false");
-        button.addEventListener("click", () => {
-          colorInput.value = value;
-          colorInput.dispatchEvent(new Event("input", { bubbles: true }));
-        });
-        palette.appendChild(button);
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "web-color-trigger";
+      trigger.setAttribute("aria-haspopup", "dialog");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (webColorPicker.open && webColorPicker.input === colorInput) closeWebColorPicker();
+        else openWebColorPicker(colorInput, trigger);
       });
-
-      colorInput.insertAdjacentElement("afterend", palette);
+      colorInput.insertAdjacentElement("afterend", trigger);
       syncInlineColorPicker(colorInput);
     });
   }
@@ -3414,6 +3765,7 @@
   async function initializeApp() {
     setupFilterMenu();
     bindControls();
+    setupInlineColorPickers();
     $$("input[type=range]").forEach(updateRangeVisual);
     updateHistoryButtons();
     loadDefaultTextureLibrary();
